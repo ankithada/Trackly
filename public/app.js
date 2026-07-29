@@ -221,6 +221,63 @@ async function runWithButton(button, busyLabel, work) {
   }
 }
 
+function setGlobalBusyOverlay(visible, message = "Processing review...") {
+  const existing = document.querySelector("#globalBusyOverlay");
+  if (!visible) {
+    existing?.remove();
+    return;
+  }
+
+  const safeMessage = String(message || "Processing review...");
+  if (existing) {
+    const textNode = existing.querySelector("[data-busy-message]");
+    if (textNode) textNode.textContent = safeMessage;
+    return;
+  }
+
+  const overlay = document.createElement("div");
+  overlay.id = "globalBusyOverlay";
+  overlay.className = "global-busy-overlay";
+  overlay.innerHTML = `
+    <div class="global-busy-card" role="status" aria-live="polite" aria-busy="true">
+      <div class="global-busy-spinner" aria-hidden="true"></div>
+      <div class="global-busy-text" data-busy-message>${escapeHtml(safeMessage)}</div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+}
+
+function setGlobalButtonLock(locked, triggerButton = null, triggerBusyLabel = "Processing...") {
+  const buttons = Array.from(document.querySelectorAll("button"));
+  buttons.forEach((button) => {
+    if (locked) {
+      button.dataset.lockPrevDisabled = button.disabled ? "1" : "0";
+      if (button === triggerButton) {
+        button.dataset.lockPrevLabel = button.textContent;
+        button.textContent = triggerBusyLabel;
+      }
+      button.disabled = true;
+      return;
+    }
+
+    if (button.dataset.lockPrevDisabled === "1") {
+      button.disabled = true;
+    } else if (button.dataset.lockPrevDisabled === "0") {
+      button.disabled = false;
+    }
+
+    if (button === triggerButton && button.dataset.lockPrevLabel != null) {
+      button.textContent = button.dataset.lockPrevLabel;
+      delete button.dataset.lockPrevLabel;
+    }
+
+    delete button.dataset.lockPrevDisabled;
+  });
+
+  document.body.classList.toggle("busy", locked);
+  setGlobalBusyOverlay(locked, triggerBusyLabel);
+}
+
 function submitButtonFor(form, event) {
   return event.submitter || form.querySelector("button[type='submit']");
 }
@@ -2635,23 +2692,25 @@ function bindView() {
       const entry = state.entries.find((item) => item.id === button.dataset.entryId);
       if (!entry) return;
       try {
-        await runWithButton(button, button.dataset.inlineReviewAction === "Approved" ? "Verifying..." : "Rejecting...", async () => {
-          await api(`/api/entries/${entry.id}/review`, {
-            method: "POST",
-            body: JSON.stringify({
-              status: button.dataset.inlineReviewAction,
-              reviewerNotes: entry.reviewerNotes || "",
-              amountPaid: entry.totalAmountInclGst,
-              paymentMode: entry.paymentMode
-            })
-          });
-          state.selectedReviewIds = state.selectedReviewIds.filter((id) => id !== entry.id);
-          if (state.selectedEntry?.id === entry.id) state.selectedEntry = null;
-          await Promise.all([loadEntries(), loadOwners()]);
-          renderApp();
+        const busyLabel = button.dataset.inlineReviewAction === "Approved" ? "Verifying..." : "Rejecting...";
+        setGlobalButtonLock(true, button, busyLabel);
+        await api(`/api/entries/${entry.id}/review`, {
+          method: "POST",
+          body: JSON.stringify({
+            status: button.dataset.inlineReviewAction,
+            reviewerNotes: entry.reviewerNotes || "",
+            amountPaid: entry.totalAmountInclGst,
+            paymentMode: entry.paymentMode
+          })
         });
+        state.selectedReviewIds = state.selectedReviewIds.filter((id) => id !== entry.id);
+        if (state.selectedEntry?.id === entry.id) state.selectedEntry = null;
+        await Promise.all([loadEntries(), loadOwners()]);
+        renderApp();
       } catch (error) {
         alert(error.message);
+      } finally {
+        setGlobalButtonLock(false, button);
       }
     });
   });
@@ -2861,6 +2920,8 @@ function bindView() {
       const amountPaid = transactions.reduce((sum, transaction) => sum + Number(transaction.amount || 0), 0);
       const paymentMode = transactions.length === 1 ? transactions[0].mode : "Multiple";
       try {
+        const busyLabel = button.dataset.reviewAction === "Approved" ? "Verifying..." : "Rejecting...";
+        setGlobalButtonLock(true, button, busyLabel);
         await api(`/api/entries/${state.selectedEntry.id}/review`, {
           method: "POST",
           body: JSON.stringify({
@@ -2877,6 +2938,8 @@ function bindView() {
         renderApp();
       } catch (error) {
         alert(error.message);
+      } finally {
+        setGlobalButtonLock(false, button);
       }
     });
   });

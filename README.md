@@ -19,7 +19,6 @@ Open `http://localhost:3000`.
 
 Without Google credentials, the app runs in demo memory mode with these accounts:
 
-- `admin@trackly.local` / `admin123`
 - `staff@trackly.local` / `staff123`
 - `reviewer@trackly.local` / `review123`
 - `analyst@trackly.local` / `analyst123`

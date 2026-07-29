@@ -27,6 +27,7 @@ function request(options, body) {
     const cookie = Array.isArray(setCookie) ? setCookie.map((c) => c.split(';')[0]).join('; ') : setCookie.split(';')[0];
 
     const payload = JSON.stringify({
+      serialNo: '101',
       receiptNumber: '',
       vehicleNumber: 'RJTEST01',
       vehicleType: 'Tipper',

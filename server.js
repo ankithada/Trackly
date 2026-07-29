@@ -9,9 +9,23 @@ const { GoogleAuth } = require("google-auth-library");
 loadEnvFile(path.join(__dirname, ".env"));
 
 const PORT = Number(process.env.PORT || 3000);
+//console.log(`Server starting on port ${process.env.PORT}...`);
 const HOST = process.env.HOST || "0.0.0.0";
 const PUBLIC_DIR = path.join(__dirname, "public");
-const SESSION_SECRET = process.env.SESSION_SECRET || "dev-session-secret";
+const SESSION_SECRETS = String(process.env.SESSION_SECRETS || process.env.SESSION_SECRET || "dev-session-secret")
+  .split(",")
+  .map((value) => value.trim())
+  .filter(Boolean);
+const PRIMARY_SESSION_SECRET = SESSION_SECRETS[0] || "dev-session-secret";
+const SESSION_COOKIE_NAME = "trackly_session";
+const SESSION_COOKIE_SAME_SITE = String(process.env.SESSION_COOKIE_SAMESITE || "Lax").trim() || "Lax";
+const SESSION_COOKIE_DOMAIN = String(process.env.SESSION_COOKIE_DOMAIN || "").trim();
+const SESSION_COOKIE_SECURE =
+  String(process.env.SESSION_COOKIE_SECURE || "").toLowerCase() === "true" ||
+  SESSION_COOKIE_SAME_SITE.toLowerCase() === "none" ||
+  process.env.NODE_ENV === "production";
+const DEPLOYMENT_REVISION = process.env.K_REVISION || "local";
+const DEPLOYMENT_SERVICE = process.env.K_SERVICE || "local";
 const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || `http://localhost:${PORT}`).replace(/\/+$/, "");
 const MAX_PHOTO_SIZE_BYTES = 20 * 1024 * 1024;
 
@@ -33,6 +47,7 @@ const SITE = {
 };
 
 const DAILY_ENTRY_COLUMNS = [
+  "S. No.",
   "Receipt No.",
   "Timestamp",
   "Need to fill this form",
@@ -849,6 +864,14 @@ function normalizeCell(value) {
   return value == null ? "" : String(value).trim();
 }
 
+function normalizeSerialNo(value) {
+  return String(value ?? "").trim();
+}
+
+function isValidSerialNo(value) {
+  return /^[0-9]{1,3}$/.test(normalizeSerialNo(value));
+}
+
 function quotedSheetName(sheetName) {
   return `'${String(sheetName).replace(/'/g, "''")}'`;
 }
@@ -1524,6 +1547,7 @@ function mapDailyEntry(row, reviewed = null) {
       }];
   return {
     id: receiptNumber || `EN-${crypto.randomBytes(4).toString("hex").toUpperCase()}`,
+    serialNo: row["S. No."] || "",
     receiptNumber,
     date: extractDate(row.Timestamp),
     siteName: SITE.name,
@@ -1576,6 +1600,7 @@ function mapDailyEntry(row, reviewed = null) {
 
 function entryToDailySheetRow(entry) {
   return {
+    "S. No.": entry.serialNo || "",
     "Receipt No.": entry.receiptNumber,
     Timestamp: entry.createdAt || new Date().toISOString(),
     "Need to fill this form": entry.formReason,
@@ -1625,21 +1650,88 @@ function makeSession(user) {
     role: user.role,
     exp: Date.now() + 1000 * 60 * 60 * 10
   }));
-  const sig = crypto.createHmac("sha256", SESSION_SECRET).update(payload).digest("base64url");
+  const sig = crypto.createHmac("sha256", PRIMARY_SESSION_SECRET).update(payload).digest("base64url");
   return `${payload}.${sig}`;
 }
 
+function serializeSessionCookie(value, maxAgeSeconds) {
+  const parts = [`${SESSION_COOKIE_NAME}=${encodeURIComponent(value)}`, "HttpOnly", `SameSite=${SESSION_COOKIE_SAME_SITE}`, "Path=/"];
+  if (Number.isFinite(maxAgeSeconds)) {
+    parts.push(`Max-Age=${Math.max(0, Math.floor(maxAgeSeconds))}`);
+  }
+  if (SESSION_COOKIE_DOMAIN) parts.push(`Domain=${SESSION_COOKIE_DOMAIN}`);
+  if (SESSION_COOKIE_SECURE) parts.push("Secure");
+  return parts.join("; ");
+}
+
+function clearSessionCookieHeader() {
+  return serializeSessionCookie("", 0);
+}
+
+function findCookieValue(req, cookieName) {
+  const cookies = String(req.headers.cookie || "")
+    .split(";")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const prefix = `${cookieName}=`;
+  const match = cookies.find((part) => part.startsWith(prefix));
+  if (!match) return "";
+  return match.slice(prefix.length);
+}
+
 function parseSession(req) {
-  const cookie = (req.headers.cookie || "").split(";").map((part) => part.trim()).find((part) => part.startsWith("trackly_session="));
-  if (!cookie) return null;
-  const token = decodeURIComponent(cookie.split("=")[1] || "");
-  const [payload, sig] = token.split(".");
-  if (!payload || !sig) return null;
-  const expected = crypto.createHmac("sha256", SESSION_SECRET).update(payload).digest("base64url");
-  if (Buffer.byteLength(sig) !== Buffer.byteLength(expected)) return null;
-  if (!crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) return null;
-  const user = JSON.parse(Buffer.from(payload.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8"));
-  if (user.exp < Date.now()) return null;
+  const encodedToken = findCookieValue(req, SESSION_COOKIE_NAME);
+  if (!encodedToken) {
+    req._tracklySessionMeta = { hasSessionCookie: false, sessionReason: "missing_cookie" };
+    return null;
+  }
+
+  let token = "";
+  try {
+    token = decodeURIComponent(encodedToken);
+  } catch {
+    req._tracklySessionMeta = { hasSessionCookie: true, sessionReason: "invalid_cookie_encoding" };
+    return null;
+  }
+
+  const tokenSeparatorIndex = token.lastIndexOf(".");
+  if (tokenSeparatorIndex <= 0) {
+    req._tracklySessionMeta = { hasSessionCookie: true, sessionReason: "invalid_token_format" };
+    return null;
+  }
+
+  const payload = token.slice(0, tokenSeparatorIndex);
+  const sig = token.slice(tokenSeparatorIndex + 1);
+  let signatureMatches = false;
+
+  for (const secret of SESSION_SECRETS) {
+    const expected = crypto.createHmac("sha256", secret).update(payload).digest("base64url");
+    if (Buffer.byteLength(sig) !== Buffer.byteLength(expected)) continue;
+    if (crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) {
+      signatureMatches = true;
+      break;
+    }
+  }
+
+  if (!signatureMatches) {
+    req._tracklySessionMeta = { hasSessionCookie: true, sessionReason: "invalid_signature" };
+    return null;
+  }
+
+  let user;
+  try {
+    user = JSON.parse(Buffer.from(payload.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8"));
+  } catch {
+    req._tracklySessionMeta = { hasSessionCookie: true, sessionReason: "invalid_payload_json" };
+    return null;
+  }
+
+  if (!user || user.exp < Date.now()) {
+    req._tracklySessionMeta = { hasSessionCookie: true, sessionReason: "expired_session" };
+    return null;
+  }
+
+  req._tracklySessionMeta = { hasSessionCookie: true, sessionReason: "ok" };
   return user;
 }
 
@@ -1762,12 +1854,14 @@ function normalizeEntry(input, user, existing = {}) {
   const grossWeight = Number(input.grossWeightTons || existing.grossWeightTons || 0);
   const netWeight = Number(input.netWeightTons || existing.netWeightTons || Math.max(0, grossWeight - tareWeight));
   const transactions = normalizeTransactions(input.transactions, existing);
+  const hasInputTransactions = Array.isArray(input.transactions) && input.transactions.length > 0;
   const paidTotal = transactionTotal(transactions);
   const amountPaid = Number(input.amountPaid || paidTotal || existing.amountPaid || 0);
   const totalAmountInclGst = Number(input.totalAmountInclGst || existing.totalAmountInclGst || amountPaid * 1.18);
   return {
     ...existing,
     id: existing.id || `EN-${Date.now()}-${crypto.randomBytes(2).toString("hex").toUpperCase()}`,
+    serialNo: String(input.serialNo || existing.serialNo || "").trim(),
     receiptNumber: (existing.receiptNumber || input.receiptNumber || "").toUpperCase(),
     date: input.date || existing.date || new Date().toISOString().slice(0, 10),
     siteName: input.siteName || existing.siteName || SITE.name,
@@ -1800,7 +1894,9 @@ function normalizeEntry(input, user, existing = {}) {
     ratePerCft: String(rate),
     royaltyPassNumber: input.royaltyPassNumber || existing.royaltyPassNumber || "",
     grossAmount: String(quantity * rate),
-    paymentMode: transactions.length === 1 ? transactions[0].mode : (input.paymentMode || existing.paymentMode || "Multiple"),
+    paymentMode: hasInputTransactions
+      ? (transactions.length === 1 ? transactions[0].mode : "Multiple")
+      : (input.paymentMode || existing.paymentMode || (transactions.length === 1 ? transactions[0].mode : "Multiple")),
     paymentStatus: input.paymentStatus || existing.paymentStatus || "Pending",
     notes: input.notes ?? existing.notes ?? "",
     staffNotes: input.staffNotes ?? existing.staffNotes ?? "",
@@ -1957,6 +2053,7 @@ async function entryHtml(entry) {
   const photos = await printablePhotos(entry);
   const rows = [
     ["Entry ID", entry.id],
+    ["S. No.", entry.serialNo],
     ["Receipt Number", entry.receiptNumber],
     ["Date", entry.date],
     ["Site", `${entry.siteName} - ${SITE.detail}`],
@@ -2055,6 +2152,10 @@ async function handleApi(req, res, user, pathname) {
       googleConnected: google.enabled,
       demoMode: !google.enabled,
       site: SITE,
+      deployment: {
+        service: DEPLOYMENT_SERVICE,
+        revision: DEPLOYMENT_REVISION
+      },
       credentialsSource: google.credentialsSource,
       runtimeDiagnostics: google.runtimeDiagnostics(),
       sheetId: google.sheetId || null,
@@ -2072,7 +2173,7 @@ async function handleApi(req, res, user, pathname) {
   }
 
   if (pathname === "/api/auth/logout" && req.method === "POST") {
-    return send(res, 200, { ok: true }, { "Set-Cookie": "trackly_session=; HttpOnly; SameSite=Lax; Max-Age=0; Path=/" });
+    return send(res, 200, { ok: true }, { "Set-Cookie": clearSessionCookieHeader() });
   }
 
   if (pathname === "/api/auth/login" && req.method === "POST") {
@@ -2091,7 +2192,23 @@ async function handleApi(req, res, user, pathname) {
       users = await migratePlaintextPasswords(users);
     }
     const safeUser = { id: found.id, name: found.name, username: found.username, email: found.email, role: found.role };
-    return send(res, 200, { user: safeUser }, { "Set-Cookie": `trackly_session=${encodeURIComponent(makeSession(safeUser))}; HttpOnly; SameSite=Lax; Path=/; Max-Age=36000` });
+    return send(res, 200, { user: safeUser }, { "Set-Cookie": serializeSessionCookie(makeSession(safeUser), 36000) });
+  }
+
+  if (pathname === "/api/entries/next-receipt" && req.method === "GET") {
+    try {
+      const receiptNumber = await suggestEntryReceiptNumber();
+      return send(res, 200, { receiptNumber });
+    } catch (error) {
+      logEvent("error", "Failed to suggest receipt number", {
+        route: pathname,
+        method: req.method,
+        requestId: req.requestId,
+        actor: user?.email || user?.username || "",
+        error: serializeError(error)
+      });
+      return sendError(res, 500, "Unable to allocate next receipt number. Please retry.");
+    }
   }
 
   if (!user) return sendError(res, 401, "Login required");
@@ -2200,30 +2317,16 @@ async function handleApi(req, res, user, pathname) {
     return send(res, 200, { fleet: fleetDetails[index] });
   }
 
-  if (pathname === "/api/entries/next-receipt" && req.method === "GET") {
-    try {
-      const receiptNumber = await suggestEntryReceiptNumber();
-      return send(res, 200, { receiptNumber });
-    } catch (error) {
-      logEvent("error", "Failed to suggest receipt number", {
-        route: pathname,
-        method: req.method,
-        requestId: req.requestId,
-        actor: user?.email || user?.username || "",
-        error: serializeError(error)
-      });
-      return sendError(res, 500, "Unable to allocate next receipt number. Please retry.");
-    }
-  }
-
   if (pathname === "/api/entries" && req.method === "GET") {
     const entries = (await readEntries()).map(publicEntry);
     return send(res, 200, { entries });
   }
 
   if (pathname === "/api/entries" && req.method === "POST") {
-    if (!requireRole(user, ["staff", "admin"])) return sendError(res, 403, "Only staff can create entries");
+    if (!requireRole(user, ["staff", "reviewer", "admin"])) return sendError(res, 403, "Only staff, reviewers, and admins can create entries");
     const input = await parseJsonOrForm(req);
+    if (!normalizeSerialNo(input.serialNo)) return sendError(res, 400, "S. No. is required");
+    if (!isValidSerialNo(input.serialNo)) return sendError(res, 400, "S. No. must be numeric and up to 3 digits");
     const entryId = crypto.randomUUID();
     const receiptNumber = await reserveEntryReceiptNumber(input.receiptNumber || "", entryId, user?.email || user?.username || "");
     const requestMeta = {
@@ -2350,7 +2453,12 @@ async function handleApi(req, res, user, pathname) {
   if (entryMatch) {
     const [, entryId, action] = entryMatch;
     const entries = await readEntries();
-    const index = entries.findIndex((entry) => entry.id === entryId);
+    const requestedEntryId = String(entryId || "").trim().toUpperCase();
+    const index = entries.findIndex((entry) => {
+      const normalizedId = String(entry.id || "").trim().toUpperCase();
+      const normalizedReceipt = String(entry.receiptNumber || "").trim().toUpperCase();
+      return normalizedId === requestedEntryId || normalizedReceipt === requestedEntryId;
+    });
     if (index === -1) return sendError(res, 404, "Entry not found");
 
     if (action === "download" && req.method === "GET") {
@@ -2362,38 +2470,59 @@ async function handleApi(req, res, user, pathname) {
     if (action === "review" && req.method === "POST") {
       if (!requireRole(user, ["reviewer", "admin"])) return sendError(res, 403, "Only reviewers can approve entries");
       const input = await readJson(req);
-      ensureNoDuplicateReceiptState(entries, entries[index].id);
-      const updated = await applyOwnerDetails(normalizeEntry({ ...input, status: input.status || "Approved" }, user, entries[index]));
-      updated.reviewedBy = user.email;
-      updated.reviewedAt = new Date().toISOString();
-      updated.status = input.status || "Approved";
-      const html = await entryHtml(updated);
-      if (google.enabled) {
-        const file = await google.uploadHtml(`${updated.id}.html`, html);
-        updated.driveFileId = file.id || "";
-        updated.driveFileUrl = file.webViewLink || "";
-      }
-      entries[index] = updated;
-      await writeEntries(entries);
+      const selectedEntry = entries[index];
+      const status = String(input.status || "Approved").trim() || "Approved";
+      const reviewedAt = new Date().toISOString();
+      const reviewedBy = String(user.email || user.username || "");
+      const reviewerNotes = String(input.reviewerNotes || "");
+
+      const transactions = normalizeTransactions(input.transactions, selectedEntry);
+      const transactionTotalValue = transactionTotal(transactions);
+      const transactionTotalText = String(transactionTotalValue);
+      const amountPaidValue = Number(input.amountPaid || selectedEntry.amountPaid || transactionTotalValue || 0);
+      const totalAmountInclGstValue = Number(input.totalAmountInclGst || selectedEntry.totalAmountInclGst || amountPaidValue || 0);
+      const paymentMode = transactions.length === 1
+        ? transactions[0].mode
+        : String(input.paymentMode || selectedEntry.paymentMode || "Multiple");
+
       await upsertReviewedEntry({
-        receiptNumber: updated.receiptNumber,
-        reviewedAt: updated.reviewedAt,
-        status: updated.status,
-        reviewedBy: updated.reviewedBy,
-        totalAmountInclGst: updated.totalAmountInclGst,
-        transactionTotal: updated.transactionTotal,
-        transactionCount: String((updated.transactions || []).length),
-        transactions: updated.transactions || [],
-        transactionSummary: updated.transactionSummary || "",
-        reviewerNotes: updated.reviewerNotes || ""
+        receiptNumber: selectedEntry.receiptNumber,
+        reviewedAt,
+        status,
+        reviewedBy,
+        totalAmountInclGst: String(totalAmountInclGstValue),
+        transactionTotal: transactionTotalText,
+        transactionCount: String(transactions.length),
+        transactions,
+        transactionSummary: transactionSummary(transactions),
+        reviewerNotes
       });
-      await audit(updated.id, user, `reviewed:${updated.status}`, input.reviewerNotes || "");
-      return send(res, 200, { entry: publicEntry(updated) });
+
+      await audit(selectedEntry.id, user, `reviewed:${status}`, reviewerNotes);
+
+      const responseEntry = {
+        ...selectedEntry,
+        status,
+        paymentStatus: status,
+        reviewedBy,
+        reviewedAt,
+        reviewerNotes,
+        transactions,
+        transactionSummary: transactionSummary(transactions),
+        transactionTotal: transactionTotalText,
+        amountPaid: String(amountPaidValue),
+        totalAmountInclGst: String(totalAmountInclGstValue),
+        paymentMode
+      };
+
+      return send(res, 200, { entry: publicEntry(responseEntry) });
     }
 
     if (req.method === "PATCH") {
       if (!requireRole(user, ["reviewer", "admin"])) return sendError(res, 403, "Only reviewers can edit entries");
       const input = await parseJsonOrForm(req);
+      if (!normalizeSerialNo(input.serialNo ?? entries[index].serialNo)) return sendError(res, 400, "S. No. is required");
+      if (!isValidSerialNo(input.serialNo ?? entries[index].serialNo)) return sendError(res, 400, "S. No. must be numeric and up to 3 digits");
       ensureNoDuplicateReceiptState(entries, entries[index].id);
       const nextReceiptNumber = input.receiptNumber
         ? ensureReceiptNumberAvailable(entries, input.receiptNumber, entries[index].id)
@@ -2510,12 +2639,15 @@ const server = http.createServer(async (req, res) => {
   try {
     const { pathname } = new URL(req.url, `http://${req.headers.host || `localhost:${PORT}`}`);
     const user = parseSession(req);
+    const sessionMeta = req._tracklySessionMeta || { hasSessionCookie: false, sessionReason: "not_checked" };
     res._tracklyLogContext = {
       requestId: req.requestId,
       method: req.method,
       route: pathname,
       actor: user?.email || user?.username || "",
-      ip: req.socket?.remoteAddress || ""
+      ip: req.socket?.remoteAddress || "",
+      hasSessionCookie: sessionMeta.hasSessionCookie,
+      sessionReason: sessionMeta.sessionReason
     };
     if (pathname.startsWith("/api/")) return await handleApi(req, res, user, pathname);
     serveStatic(req, res, pathname);
@@ -2534,6 +2666,8 @@ server.listen(PORT, HOST, () => {
   logEvent("info", "Trackly server started", {
     host: HOST,
     port: PORT,
+    service: DEPLOYMENT_SERVICE,
+    revision: DEPLOYMENT_REVISION,
     publicBaseUrl: PUBLIC_BASE_URL,
     googleMode: google.enabled ? "enabled" : "demo",
     credentialsSource: google.credentialsSource,

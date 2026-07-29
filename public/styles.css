@@ -1400,6 +1400,13 @@ th {
   border: 1px solid #fda29b;
 }
 
+.owner-current-balance {
+  margin-top: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #344054;
+}
+
 .review-list-head {
   display: flex;
   align-items: center;

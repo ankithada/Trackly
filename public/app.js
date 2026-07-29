@@ -15,6 +15,7 @@ const state = {
   users: [],
   debitEntries: [],
   consolidatedEntries: [],
+  ownerAdvances: [],
   view: "entry",
   selectedEntry: null,
   selectedReviewIds: [],
@@ -22,8 +23,13 @@ const state = {
   debitDraft: null,
   ownerDraft: null,
   fleetDraft: null,
+  ownerAdvanceDraft: null,
   adminTab: "users",
   ownerSearch: "",
+  ownerAdvanceFilterOwner: "",
+  ownerAdvanceFilterFrom: "",
+  ownerAdvanceFilterTo: "",
+  ownerAdvancePage: 1,
   activeOwnerName: "",
   dashboardMonth: "all",
   dashboardDateFrom: DASHBOARD_DEFAULT_FROM_ISO,
@@ -282,23 +288,35 @@ function addIconToButton(button, iconName) {
 
 async function init() {
   state.config = await api("/api/config/status");
-  try {
-    state.health = await api("/api/config/health");
-  } catch (error) {
-    state.health = { googleConnected: false, error: error.message || "Health check failed" };
-  }
+  state.health = { googleConnected: false, pending: true };
   const me = await api("/api/auth/me");
   state.user = me.user;
-  if (!state.user) return renderLogin();
+  if (!state.user) {
+    renderLogin();
+    refreshHealthStatus();
+    return;
+  }
   state.view = roleViews[state.user.role][0];
   await loadOwners();
   await loadFleetDetails();
   await loadEntries();
   await loadDebitEntries();
   await loadConsolidatedEntries();
+  await loadOwnerAdvances();
   await loadNextReceipt();
   if (["admin", "reviewer"].includes(state.user.role)) await loadUsers();
   renderApp();
+  refreshHealthStatus();
+}
+
+async function refreshHealthStatus() {
+  try {
+    state.health = await api("/api/config/health");
+  } catch (error) {
+    state.health = { googleConnected: false, error: error.message || "Health check failed" };
+  }
+  if (!state.user) renderLogin();
+  else renderApp();
 }
 
 async function loadEntries() {
@@ -317,6 +335,12 @@ async function loadConsolidatedEntries() {
   if (!state.user) return;
   const data = await api("/api/consolidated-entries");
   state.consolidatedEntries = data.consolidatedEntries || [];
+}
+
+async function loadOwnerAdvances() {
+  if (!state.user) return;
+  const data = await api("/api/owner-advances");
+  state.ownerAdvances = data.ownerAdvances || [];
 }
 
 function renderLogin() {
@@ -368,6 +392,7 @@ function renderLogin() {
           loadEntries(),
           loadDebitEntries(),
           loadConsolidatedEntries(),
+          loadOwnerAdvances(),
           loadNextReceipt(),
           ["admin", "reviewer"].includes(state.user.role) ? loadUsers() : Promise.resolve()
         ]);
@@ -424,11 +449,15 @@ function renderApp() {
     button.addEventListener("click", () => {
       state.view = button.dataset.view;
       state.selectedEntry = null;
-      if (state.view === "entry") loadNextReceipt().then(renderApp).catch((error) => alert(error.message));
+      if (state.view === "entry") Promise.all([
+        loadOwners(),
+        loadNextReceipt()
+      ]).then(renderApp).catch((error) => alert(error.message));
       else if (state.view === "admin") Promise.all([
         ["admin", "reviewer"].includes(state.user.role) ? loadUsers() : Promise.resolve(),
         loadOwners(),
-        loadFleetDetails()
+        loadFleetDetails(),
+        loadOwnerAdvances()
       ]).then(renderApp).catch((error) => alert(error.message));
       else renderApp();
     });
@@ -443,6 +472,7 @@ function renderApp() {
         loadEntries(),
         loadDebitEntries(),
         loadConsolidatedEntries(),
+        loadOwnerAdvances(),
         loadNextReceipt(),
         ["admin", "reviewer"].includes(state.user.role) ? loadUsers() : Promise.resolve()
       ]);
@@ -651,6 +681,8 @@ function ownerSelectField(entry) {
     ownerNames.push(String(value).trim());
   }
   ownerNames.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+  const selectedOwner = state.owners.find((owner) => String(owner.name || "").trim().toLowerCase() === String(value || "").trim().toLowerCase());
+  const currentBalance = Number(selectedOwner?.currentBalance || 0);
   return `<div class="field owner-dropdown-field"><label>Owner Name <span>*</span></label>
     <input type="hidden" name="ownerName" value="${escapeAttr(value)}" required>
     <div class="owner-dropdown" data-owner-dropdown>
@@ -661,6 +693,7 @@ function ownerSelectField(entry) {
         <div class="owner-dropdown-empty" data-owner-empty hidden>No owners found</div>
       </div>
     </div>
+    <div class="owner-current-balance" data-owner-current-balance>Current Balance: Rs. ${formatMoney(currentBalance)}</div>
   </div>`;
 }
 
@@ -1143,6 +1176,8 @@ function renderDebitReviewCard(entry) {
 function renderReviewDetail(entry) {
   const statusClass = entry.status === "Approved" ? "approved" : entry.status === "Rejected" ? "rejected" : "pending";
   const transactions = reviewTransactions(entry);
+  const ownerRecord = state.owners.find((item) => String(item.name || "").trim().toLowerCase() === String(entry.ownerName || "").trim().toLowerCase());
+  const ownerCurrentBalance = Number(ownerRecord?.currentBalance || 0);
   return `
     <div class="card review-detail-card">
       <div class="review-detail-topbar">
@@ -1177,7 +1212,8 @@ function renderReviewDetail(entry) {
         ${renderDetailSection("Owner Details", [
           ["Owner Name", entry.ownerName],
           ["Phone", entry.ownerPhone],
-          ["Address", entry.ownerAddress || "-"]
+          ["Address", entry.ownerAddress || "-"],
+          ["Current Balance", `Rs. ${formatMoney(ownerCurrentBalance)}`]
         ])}
         ${renderDetailSection("Weight Details", [
           ["Tare Weight (Empty)", formatWeight(entry.tareWeightTons)],
@@ -2010,7 +2046,8 @@ function renderAdmin() {
       <div class="admin-tab-row">
         ${[
           ["users", "User Master"],
-          ["owners", "Owner Master"]
+          ["owners", "Owner Master"],
+          ["ownerAdvances", "Owner Advances"]
         ].map(([tab, label]) => `
           <button type="button" class="admin-tab-chip ${state.adminTab === tab ? "active" : ""}" data-admin-tab="${tab}">${label}</button>
         `).join("")}
@@ -2043,7 +2080,7 @@ function renderAdmin() {
           <div class="card admin-inner-card">
             <h3>System Setup</h3>
             <p><strong>Storage:</strong> ${state.config.demoMode ? "Demo memory storage" : "Google Sheets and Drive"}</p>
-            <p>Connected sheet tabs: Daily Entry Form, Owner Master, Owner Fleet Details, Users, Reviewed Entries, and Receipt Registry.</p>
+            <p>Connected sheet tabs: Daily Entry Form, Owner Master, Owner Fleet Details, Owner Advance, Users, Reviewed Entries, and Receipt Registry.</p>
             <p><strong>Health:</strong> ${state.health?.googleConnected ? "OK" : "Failed"}</p>
             ${state.health?.driveFolder ? `<p><strong>Drive folder:</strong> ${state.health.driveFolder.name || state.health.driveFolder.id}</p>` : ""}
             ${state.health?.error ? `<p><strong>Health error:</strong> ${state.health.error.message || state.health.error}</p>` : ""}
@@ -2051,6 +2088,52 @@ function renderAdmin() {
         </div>
         <div>
           ${renderUsersTable()}
+        </div>
+      </section>
+      ` : state.adminTab === "ownerAdvances" ? `
+      <section class="card admin-section">
+        <div class="admin-section-head">
+          <div>
+            <h3>Owner Advances</h3>
+            <p>Record advance credits received from owners. Multiple credits can be added for the same owner.</p>
+          </div>
+        </div>
+        <div class="grid two">
+          <div class="card admin-inner-card">
+            <h3>${state.ownerAdvanceDraft ? "Edit Owner Advance" : "Add Owner Advance"}</h3>
+            <form id="ownerAdvanceForm">
+              ${renderOwnerAdvanceOwnerField(state.ownerAdvanceDraft || {})}
+              <div class="grid two">
+                ${field("ownerAdvanceDate", "Date", "date", state.ownerAdvanceDraft?.date || new Date().toISOString().slice(0, 10), {})}
+                ${field("ownerAdvanceAmount", "Amount (Rs.)", "number", state.ownerAdvanceDraft?.amount || "", { step: "0.01", placeholder: "0" })}
+              </div>
+              ${field("ownerAdvanceCurrentBalance", "Current Balance (optional)", "number", state.ownerAdvanceDraft?.currentBalance || "", { step: "0.01", required: false, placeholder: "Set exact balance if owner had previous used advances" })}
+              ${selectField("ownerAdvancePaymentMode", "Payment Mode", ["Cash", "UPI", "Bank Transfer", "Credit", "Advance"], state.ownerAdvanceDraft?.paymentMode || "Cash")}
+              ${textareaField("ownerAdvanceNotes", "Notes (optional)", state.ownerAdvanceDraft?.notes || "", "Add context for this credit...", false)}
+              <div class="actions">
+                <button type="submit" class="solid-action">${state.ownerAdvanceDraft ? "Update Advance Credit" : "Add Advance Credit"}</button>
+                ${state.ownerAdvanceDraft ? `<button type="button" class="secondary visible-secondary" id="cancelOwnerAdvanceEdit">Cancel</button>` : ""}
+              </div>
+            </form>
+          </div>
+          <div class="card admin-inner-card">
+            <h3>Advance Credits History</h3>
+            <div class="grid three">
+              ${selectField(
+                "ownerAdvanceFilterOwner",
+                "Filter by Owner",
+                state.owners
+                  .map((owner) => String(owner.name || "").trim())
+                  .filter(Boolean)
+                  .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" })),
+                state.ownerAdvanceFilterOwner || "",
+                "All Owners"
+              )}
+              ${field("ownerAdvanceFilterFrom", "From Date", "date", state.ownerAdvanceFilterFrom || "", { required: false })}
+              ${field("ownerAdvanceFilterTo", "To Date", "date", state.ownerAdvanceFilterTo || "", { required: false })}
+            </div>
+            ${renderOwnerAdvancesTable()}
+          </div>
         </div>
       </section>
       ` : `
@@ -2115,6 +2198,83 @@ function renderAdmin() {
         </div>
       </section>
       `}
+    </div>
+  `;
+}
+
+function renderOwnerAdvanceOwnerField(draft = {}) {
+  const ownerNames = state.owners
+    .map((owner) => String(owner.name || "").trim())
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+  const ownerValue = String(draft.ownerName || "").trim();
+  const listOptions = ownerValue && !ownerNames.some((name) => name.toLowerCase() === ownerValue.toLowerCase())
+    ? [ownerValue, ...ownerNames]
+    : ownerNames;
+  return `
+    <div class="field">
+      <label>Owner Name <span>*</span></label>
+      <input type="text" name="ownerName" list="ownerAdvanceOwnerOptions" value="${escapeAttr(ownerValue)}" placeholder="Search or select owner" required autocomplete="off">
+      <datalist id="ownerAdvanceOwnerOptions">
+        ${listOptions.map((name) => `<option value="${escapeAttr(name)}"></option>`).join("")}
+      </datalist>
+    </div>
+  `;
+}
+
+function renderOwnerAdvancesTable() {
+  const ownerQuery = String(state.ownerAdvanceFilterOwner || "").trim().toLowerCase();
+  const fromDate = String(state.ownerAdvanceFilterFrom || "").trim();
+  const toDate = String(state.ownerAdvanceFilterTo || "").trim();
+  const rows = [...(state.ownerAdvances || [])]
+    .filter((entry) => {
+      const ownerName = String(entry.ownerName || "").toLowerCase();
+      const entryDate = String(entry.date || entry.createdDate || "").slice(0, 10);
+      if (ownerQuery && !ownerName.includes(ownerQuery)) return false;
+      if (fromDate && entryDate && entryDate < fromDate) return false;
+      if (toDate && entryDate && entryDate > toDate) return false;
+      return true;
+    })
+    .sort((a, b) => String(b.date || b.createdDate || "").localeCompare(String(a.date || a.createdDate || "")));
+
+  const pageSize = 10;
+  const totalRows = rows.length;
+  const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
+  const currentPage = Math.min(Math.max(1, Number(state.ownerAdvancePage || 1)), totalPages);
+  const startIndex = totalRows ? (currentPage - 1) * pageSize : 0;
+  const endIndex = totalRows ? Math.min(startIndex + pageSize, totalRows) : 0;
+  const pagedRows = rows.slice(startIndex, endIndex);
+  state.ownerAdvancePage = currentPage;
+
+  if (!rows.length) return `<div class="empty compact">No owner advances recorded yet.</div>`;
+  return `
+    <div class="actions" style="justify-content: space-between; margin-bottom: 10px;">
+      <span class="badge">Showing ${startIndex + 1}-${endIndex} of ${totalRows}</span>
+      <div class="actions">
+        <button type="button" class="secondary visible-secondary" id="ownerAdvancePrev" ${currentPage <= 1 ? "disabled" : ""}>Previous</button>
+        <span class="badge">Page ${currentPage} / ${totalPages}</span>
+        <button type="button" class="secondary visible-secondary" id="ownerAdvanceNext" ${currentPage >= totalPages ? "disabled" : ""}>Next</button>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>ID</th><th>Date</th><th>Owner</th><th>Amount</th><th>Current Balance</th><th>Payment Mode</th><th>Notes</th><th>Created By</th><th>Actions</th></tr></thead>
+        <tbody>
+          ${pagedRows.map((entry) => `
+            <tr>
+              <td>${escapeHtml(entry.ownerAdvanceId || "-")}</td>
+              <td>${escapeHtml(entry.date || entry.createdDate || "-")}</td>
+              <td>${escapeHtml(entry.ownerName || "-")}</td>
+              <td>Rs. ${formatMoney(Number(entry.amount || 0))}</td>
+              <td>Rs. ${formatMoney(Number(entry.currentBalance || 0))}</td>
+              <td>${escapeHtml(entry.paymentMode || "-")}</td>
+              <td>${escapeHtml(entry.notes || "-")}</td>
+              <td>${escapeHtml(entry.createdBy || "-")}</td>
+              <td><button type="button" class="secondary visible-secondary" data-edit-owner-advance="${escapeAttr(entry.ownerAdvanceId || "")}">Edit</button></td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
     </div>
   `;
 }
@@ -2257,6 +2417,114 @@ function bindView() {
     if (countNode) countNode.textContent = `${visibleCount} shown`;
   });
 
+  document.querySelector("[name='ownerAdvanceFilterOwner']")?.addEventListener("change", (event) => {
+    state.ownerAdvanceFilterOwner = event.currentTarget.value || "";
+    state.ownerAdvancePage = 1;
+    renderApp();
+  });
+
+  document.querySelector("[name='ownerAdvanceFilterFrom']")?.addEventListener("change", (event) => {
+    state.ownerAdvanceFilterFrom = event.currentTarget.value || "";
+    state.ownerAdvancePage = 1;
+    renderApp();
+  });
+
+  document.querySelector("[name='ownerAdvanceFilterTo']")?.addEventListener("change", (event) => {
+    state.ownerAdvanceFilterTo = event.currentTarget.value || "";
+    state.ownerAdvancePage = 1;
+    renderApp();
+  });
+
+  document.querySelector("#ownerAdvancePrev")?.addEventListener("click", () => {
+    state.ownerAdvancePage = Math.max(1, Number(state.ownerAdvancePage || 1) - 1);
+    renderApp();
+  });
+
+  document.querySelector("#ownerAdvanceNext")?.addEventListener("click", () => {
+    state.ownerAdvancePage = Number(state.ownerAdvancePage || 1) + 1;
+    renderApp();
+  });
+
+  document.querySelectorAll("[data-edit-owner-advance]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const record = state.ownerAdvances.find((entry) => entry.ownerAdvanceId === button.dataset.editOwnerAdvance);
+      if (!record) return;
+      state.ownerAdvanceDraft = { ...record, currentBalance: record.currentBalance || "" };
+      renderApp();
+    });
+  });
+
+  document.querySelector("#cancelOwnerAdvanceEdit")?.addEventListener("click", () => {
+    state.ownerAdvanceDraft = null;
+    renderApp();
+  });
+
+  const ownerAdvanceAmountInput = document.querySelector("[name='ownerAdvanceAmount']");
+  const ownerAdvanceCurrentBalanceInput = document.querySelector("[name='ownerAdvanceCurrentBalance']");
+  if (ownerAdvanceAmountInput && ownerAdvanceCurrentBalanceInput) {
+    ownerAdvanceCurrentBalanceInput.dataset.lastAutoValue = ownerAdvanceCurrentBalanceInput.value || "";
+
+    const syncOwnerAdvanceCurrentBalance = () => {
+      if (state.ownerAdvanceDraft) return;
+      const nextAmount = String(ownerAdvanceAmountInput.value || "");
+      const currentValue = String(ownerAdvanceCurrentBalanceInput.value || "");
+      const lastAutoValue = String(ownerAdvanceCurrentBalanceInput.dataset.lastAutoValue || "");
+      if (!currentValue || currentValue === lastAutoValue) {
+        ownerAdvanceCurrentBalanceInput.value = nextAmount;
+        ownerAdvanceCurrentBalanceInput.dataset.lastAutoValue = nextAmount;
+      }
+    };
+
+    ownerAdvanceAmountInput.addEventListener("input", syncOwnerAdvanceCurrentBalance);
+
+    ownerAdvanceCurrentBalanceInput.addEventListener("input", () => {
+      if (state.ownerAdvanceDraft) return;
+      const amountValue = String(ownerAdvanceAmountInput.value || "");
+      const balanceValue = String(ownerAdvanceCurrentBalanceInput.value || "");
+      if (!balanceValue || balanceValue === amountValue) {
+        ownerAdvanceCurrentBalanceInput.dataset.lastAutoValue = balanceValue;
+      }
+    });
+
+    syncOwnerAdvanceCurrentBalance();
+  }
+
+  document.querySelector("#ownerAdvanceForm")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const payload = {
+      ownerName: form.querySelector("[name='ownerName']")?.value || "",
+      amount: form.querySelector("[name='ownerAdvanceAmount']")?.value || 0,
+      currentBalance: form.querySelector("[name='ownerAdvanceCurrentBalance']")?.value || "",
+      paymentMode: form.querySelector("[name='ownerAdvancePaymentMode']")?.value || "Cash",
+      date: form.querySelector("[name='ownerAdvanceDate']")?.value || new Date().toISOString().slice(0, 10),
+      notes: form.querySelector("[name='ownerAdvanceNotes']")?.value || ""
+    };
+    const button = submitButtonFor(form, event);
+    try {
+      await runWithButton(button, "Saving...", async () => {
+        const editingId = state.ownerAdvanceDraft?.ownerAdvanceId || "";
+        if (editingId) {
+          await api(`/api/owner-advances/${encodeURIComponent(editingId)}`, {
+            method: "PATCH",
+            body: JSON.stringify(payload)
+          });
+        } else {
+          await api("/api/owner-advances", {
+            method: "POST",
+            body: JSON.stringify(payload)
+          });
+        }
+        state.ownerAdvanceDraft = null;
+        state.ownerAdvancePage = 1;
+        await Promise.all([loadOwnerAdvances(), loadOwners()]);
+        renderApp();
+      });
+    } catch (error) {
+      alert(error.message);
+    }
+  });
+
   document.querySelector("#reviewOwnerFilter")?.addEventListener("change", (event) => {
     state.reviewOwnerFilter = event.currentTarget.value || "";
     state.selectedReviewIds = [];
@@ -2324,6 +2592,16 @@ function bindView() {
     syncVehicleTypeField(entryForm);
     entryForm.addEventListener("submit", async (event) => {
       event.preventDefault();
+      const ownerName = String(entryForm.querySelector("[name='ownerName']")?.value || "").trim();
+      const paymentMode = String(entryForm.querySelector("[name='paymentMode']")?.value || "").trim();
+      if (ownerName && paymentMode.toLowerCase() === "advance") {
+        const owner = state.owners.find((item) => String(item.name || "").trim().toLowerCase() === ownerName.toLowerCase());
+        const currentBalance = Number(owner?.currentBalance || 0);
+        if (!owner || currentBalance <= 0) {
+          alert(`Advance payment is not allowed for ${ownerName} because Current Balance is zero.`);
+          return;
+        }
+      }
       const button = submitButtonFor(entryForm, event);
       try {
         await runWithButton(button, state.selectedEntry ? "Saving..." : "Submitting...", async () => {
@@ -2331,11 +2609,11 @@ function bindView() {
           if (state.selectedEntry) {
             const updated = await api(`/api/entries/${state.selectedEntry.id}`, { method: "PATCH", body: payload });
             state.selectedEntry = updated.entry;
-            await Promise.all([loadEntries(), loadNextReceipt()]);
+            await Promise.all([loadEntries(), loadOwners(), loadNextReceipt()]);
           } else {
             const created = await api("/api/entries", { method: "POST", body: payload });
             state.nextReceiptNumber = created.nextReceiptNumber || "";
-            await loadEntries();
+            await Promise.all([loadEntries(), loadOwners()]);
           }
           renderApp();
         });
@@ -2369,7 +2647,7 @@ function bindView() {
           });
           state.selectedReviewIds = state.selectedReviewIds.filter((id) => id !== entry.id);
           if (state.selectedEntry?.id === entry.id) state.selectedEntry = null;
-          await loadEntries();
+          await Promise.all([loadEntries(), loadOwners()]);
           renderApp();
         });
       } catch (error) {
@@ -2595,7 +2873,7 @@ function bindView() {
         });
         state.selectedReviewIds = state.selectedReviewIds.filter((id) => id !== state.selectedEntry.id);
         state.selectedEntry = null;
-        await loadEntries();
+        await Promise.all([loadEntries(), loadOwners()]);
         renderApp();
       } catch (error) {
         alert(error.message);
@@ -2996,9 +3274,14 @@ function syncOwnerDetails(form) {
   const owner = state.owners.find((item) => String(item.name || "").trim().toLowerCase() === ownerName.toLowerCase());
   const phoneInput = form.querySelector("[name='ownerPhone']");
   const addressInput = form.querySelector("[name='ownerAddress']");
+  const balanceNode = form.querySelector("[data-owner-current-balance]");
   if (!phoneInput || !addressInput) return;
   phoneInput.value = owner ? owner.phone || "" : "";
   addressInput.value = owner ? owner.address || "" : "";
+  if (balanceNode) {
+    const currentBalance = Number(owner?.currentBalance || 0);
+    balanceNode.textContent = `Current Balance: Rs. ${formatMoney(currentBalance)}`;
+  }
 }
 
 function syncVehicleTypeField(form) {

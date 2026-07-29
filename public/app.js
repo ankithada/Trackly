@@ -1,3 +1,10 @@
+const TODAY_ISO = new Date().toISOString().slice(0, 10);
+const DASHBOARD_DEFAULT_FROM_ISO = (() => {
+  const date = new Date();
+  date.setDate(date.getDate() - 29);
+  return date.toISOString().slice(0, 10);
+})();
+
 const state = {
   user: null,
   config: null,
@@ -19,12 +26,24 @@ const state = {
   ownerSearch: "",
   activeOwnerName: "",
   dashboardMonth: "all",
+  dashboardDateFrom: DASHBOARD_DEFAULT_FROM_ISO,
+  dashboardDateTo: TODAY_ISO,
+  dashboardOwnerFilterOwner: "",
+  dashboardOwnerFilterCategory: "all",
+  dashboardOwnerFilterTransactions: "all",
+  dashboardOwnerFilterRevenue: "all",
+  dashboardOwnerPage: 1,
   reviewSidebarOpen: true,
   reviewOwnerFilter: "",
   reviewPaymentFilter: "",
-  reviewDate: new Date().toISOString().slice(0, 10),
+  reviewVehicleCategoryFilter: "",
+  reviewPage: 1,
+  reviewPageSize: 10,
+  reviewDate: TODAY_ISO,
   reviewFilter: "Unreviewed"
 };
+
+const REVIEW_PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
 
 const PHOTO_UPLOAD_CONFIG = {
   maxFileBytes: 15 * 1024 * 1024,
@@ -124,6 +143,7 @@ async function api(path, options = {}) {
   const isFormData = options.body instanceof FormData;
   const response = await fetch(path, {
     ...options,
+    credentials: "include",
     headers: isFormData ? (options.headers || {}) : {
       "Content-Type": "application/json",
       ...(options.headers || {})
@@ -468,6 +488,17 @@ function renderEntryForm(entry = {}) {
           <strong>${receiptNumber}</strong>
         </div>
         <input name="receiptNumber" type="hidden" value="${receiptNumber === "Generating..." ? "" : receiptNumber}">
+        <section class="form-section">
+          <h3>Entry Identification</h3>
+          <div class="grid two">
+            ${field("serialNo", "S. No.", "text", entry.serialNo || "", {
+              placeholder: "Enter serial number",
+              pattern: "[0-9]{1,3}",
+              maxlength: "3",
+              inputmode: "numeric"
+            })}
+          </div>
+        </section>
         
         <section class="form-section">
           <h3>Need to fill this form?</h3>
@@ -535,7 +566,7 @@ function renderEntryForm(entry = {}) {
             ${field("totalAmountInclGst", "Total Amount (incl. GST) (Rs.)", "number", entry.totalAmountInclGst || "", { step: "0.01", placeholder: "e.g. 2500" })}
             ${field("amountPaid", "Mineral Amount (Rs.)", "number", entry.amountPaid || "", { step: "0.01", placeholder: "Auto-calculated", readonly: true })}
           </div>
-          ${selectField("paymentMode", "Payment Mode", ["Cash", "UPI", "Bank Transfer", "Credit"], entry.paymentMode || "Cash")}
+          ${selectField("paymentMode", "Payment Mode", ["Cash", "UPI", "Bank Transfer","Advance", "Credit"], entry.paymentMode || "Cash")}
           ${textareaField("notes", "Notes (optional)", entry.notes || "", "Any additional remarks...", false)}
         </section>
         <section class="form-section">
@@ -565,8 +596,10 @@ function field(name, label, type, value, options = {}) {
   const step = options.step ? `step="${options.step}"` : "";
   const placeholder = options.placeholder ? `placeholder="${escapeAttr(options.placeholder)}"` : "";
   const pattern = options.pattern ? `pattern="${options.pattern}"` : "";
+  const maxLength = options.maxlength ? `maxlength="${options.maxlength}"` : "";
+  const inputMode = options.inputmode ? `inputmode="${escapeAttr(options.inputmode)}"` : "";
   const readOnly = options.readonly ? "readonly" : "";
-  return `<div class="field"><label>${label} ${required ? "<span>*</span>" : ""}</label><input name="${name}" type="${type}" value="${escapeAttr(value)}" ${step} ${placeholder} ${pattern} ${readOnly} ${required}></div>`;
+  return `<div class="field"><label>${label} ${required ? "<span>*</span>" : ""}</label><input name="${name}" type="${type}" value="${escapeAttr(value)}" ${step} ${placeholder} ${pattern} ${maxLength} ${inputMode} ${readOnly} ${required}></div>`;
 }
 
 function selectField(name, label, options, value, placeholder = "") {
@@ -609,14 +642,26 @@ function textareaField(name, label, value, placeholder, required = true) {
 
 function ownerSelectField(entry) {
   const value = entry.ownerName || "";
-  const ownerNames = state.owners.map((owner) => owner.name);
-  const options = value && !ownerNames.includes(value)
-    ? [{ name: value, phone: entry.ownerPhone || "", address: entry.ownerAddress || "" }, ...state.owners]
-    : state.owners;
-  return `<div class="field"><label>Owner Name <span>*</span></label><select name="ownerName" required>
-    <option value="">Select owner</option>
-    ${options.map((owner) => `<option value="${escapeAttr(owner.name)}" ${owner.name === value ? "selected" : ""}>${owner.name}</option>`).join("")}
-  </select></div>`;
+  const ownerNames = Array.from(new Set(
+    state.owners
+      .map((owner) => String(owner.name || "").trim())
+      .filter(Boolean)
+  ));
+  if (value && !ownerNames.some((name) => name.toLowerCase() === String(value).trim().toLowerCase())) {
+    ownerNames.push(String(value).trim());
+  }
+  ownerNames.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+  return `<div class="field owner-dropdown-field"><label>Owner Name <span>*</span></label>
+    <input type="hidden" name="ownerName" value="${escapeAttr(value)}" required>
+    <div class="owner-dropdown" data-owner-dropdown>
+      <input type="text" class="owner-search-input" value="${escapeAttr(value)}" placeholder="Search owner" autocomplete="off" data-owner-search-input>
+      <button type="button" class="owner-dropdown-toggle" aria-label="Open owner list" data-owner-dropdown-toggle>▾</button>
+      <div class="owner-dropdown-list" data-owner-dropdown-list hidden>
+        ${ownerNames.map((name) => `<button type="button" class="owner-dropdown-option" data-owner-option="${escapeAttr(name)}">${escapeHtml(name)}</button>`).join("")}
+        <div class="owner-dropdown-empty" data-owner-empty hidden>No owners found</div>
+      </div>
+    </div>
+  </div>`;
 }
 
 function choiceGroup(name, options, value, required = false) {
@@ -862,13 +907,30 @@ function renderReviewEntriesPanel(entries) {
   const allowBatchSelection = !["Consolidated Credits", "Debit Entries"].includes(state.reviewFilter);
   const selectedEntries = allowBatchSelection ? entries.filter((entry) => state.selectedReviewIds.includes(entry.id)) : [];
   const selectedTotal = selectedEntries.reduce((sum, entry) => sum + Number(entry.totalAmountInclGst || entry.grossAmount || 0), 0);
+  const filteredDailyRevenue = entries.reduce((sum, entry) => sum + Number(entry.totalAmountInclGst || entry.grossAmount || 0), 0);
+  const requestedPageSize = Number(state.reviewPageSize || 10);
+  const pageSize = REVIEW_PAGE_SIZE_OPTIONS.includes(requestedPageSize) ? requestedPageSize : 10;
+  const totalEntries = entries.length;
+  const totalPages = Math.max(1, Math.ceil(totalEntries / pageSize));
+  const currentPage = Math.min(Math.max(1, Number(state.reviewPage || 1)), totalPages);
+  const pageStart = totalEntries ? (currentPage - 1) * pageSize : 0;
+  const pageEnd = totalEntries ? Math.min(pageStart + pageSize, totalEntries) : 0;
+  const pagedEntries = entries.slice(pageStart, pageEnd);
+  state.reviewPage = currentPage;
+  state.reviewPageSize = pageSize;
   const ownerOptions = Array.from(new Set(
     state.entries
       .filter((entry) => String(entry.date || "").slice(0, 10) === state.reviewDate)
       .map((entry) => entry.ownerName)
       .filter(Boolean)
   )).sort();
-  const paymentOptions = ["Cash", "UPI", "Bank Transfer", "Credit", "Multiple"];
+  const vehicleCategoryOptions = Array.from(new Set(
+    state.entries
+      .filter((entry) => String(entry.date || "").slice(0, 10) === state.reviewDate)
+      .map((entry) => entry.vehicleCategory)
+      .filter(Boolean)
+  )).sort();
+  const paymentOptions = ["Cash", "UPI", "Bank Transfer", "Credit", "Advance", "Multiple"];
   return `
     <div class="card review-stream-card">
       <div class="review-list-head">
@@ -877,6 +939,20 @@ function renderReviewEntriesPanel(entries) {
           <p class="review-panel-subtitle">${formatReviewLongDate(state.reviewDate)}</p>
         </div>
         <span>${entries.length}</span>
+      </div>
+      <div class="review-pagination-toolbar">
+        <div class="field review-page-size-field">
+          <label for="reviewPageSize">Entries per page</label>
+          <select id="reviewPageSize">
+            ${REVIEW_PAGE_SIZE_OPTIONS.map((size) => `<option value="${size}" ${pageSize === size ? "selected" : ""}>${size}</option>`).join("")}
+          </select>
+        </div>
+        <div class="review-pagination-meta">Showing ${totalEntries ? pageStart + 1 : 0}-${pageEnd} of ${totalEntries}</div>
+        <div class="review-pagination-actions">
+          <button type="button" class="secondary" id="reviewPagePrev" ${currentPage <= 1 ? "disabled" : ""}>Previous</button>
+          <span class="review-pagination-page">Page ${currentPage} of ${totalPages}</span>
+          <button type="button" class="secondary" id="reviewPageNext" ${currentPage >= totalPages ? "disabled" : ""}>Next</button>
+        </div>
       </div>
       <div class="review-filter-row">
         ${["Unreviewed", "Approved", "Rejected", "Consolidated Credits", "Debit Entries"].map((filter) => `
@@ -903,7 +979,15 @@ function renderReviewEntriesPanel(entries) {
               ${paymentOptions.map((mode) => `<option value="${escapeAttr(mode)}" ${state.reviewPaymentFilter === mode ? "selected" : ""}>${mode}</option>`).join("")}
             </select>
           </div>
+          <div class="field">
+            <label>Vehicle Category</label>
+            <select id="reviewVehicleCategoryFilter">
+              <option value="">All Vehicle Categories</option>
+              ${vehicleCategoryOptions.map((category) => `<option value="${escapeAttr(category)}" ${state.reviewVehicleCategoryFilter === category ? "selected" : ""}>${escapeHtml(category)}</option>`).join("")}
+            </select>
+          </div>
         </div>
+        <div class="review-filter-revenue">Daily Revenue (Filtered): <strong>Rs. ${formatMoney(filteredDailyRevenue)}</strong></div>
       ` : ""}
       ${selectedEntries.length >= 2 ? `
         <div class="review-selection-bar">
@@ -917,9 +1001,9 @@ function renderReviewEntriesPanel(entries) {
           </div>
         </div>
       ` : ""}
-      ${entries.length ? `
+      ${totalEntries ? `
         <div class="review-stream-list">
-          ${entries.map((entry) => renderReviewEntryCard(entry)).join("")}
+          ${pagedEntries.map((entry) => renderReviewEntryCard(entry)).join("")}
         </div>
       ` : `<div class="empty compact">No ${state.reviewFilter.toLowerCase()} entries for this date.</div>`}
     </div>
@@ -975,6 +1059,7 @@ function renderReviewEntryCard(entry) {
         <div class="review-meta-line">
           <span>By: ${entry.createdBy || state.user.name}</span>
           <span>#${entry.id}</span>
+          <code>S. No.: ${entry.serialNo || "-"}</code>
           <code>Receipt: ${entry.receiptNumber || "-"}</code>
         </div>
         <div class="review-inline-actions">
@@ -1075,7 +1160,7 @@ function renderReviewDetail(entry) {
         <div class="review-slip-header">
           <div>
             <div class="slip-title">Sand Loading Slip</div>
-            <div class="slip-meta">Entry #${entry.receiptNumber || entry.id} · ${formatEntryDateTime(entry.createdAt || entry.date)}</div>
+            <div class="slip-meta">S. No. ${entry.serialNo || "-"} · Entry #${entry.receiptNumber || entry.id} · ${formatEntryDateTime(entry.createdAt || entry.date)}</div>
             <div class="slip-identifier">#${entry.receiptNumber || entry.id}</div>
           </div>
           <span class="badge ${statusClass}">${entry.status === "Pending Review" ? "Pending" : entry.status}</span>
@@ -1183,7 +1268,7 @@ function renderTransactionRow(transaction, index) {
         <div class="field">
           <label>Mode</label>
           <select name="transactionMode">
-            ${["Cash", "UPI", "Bank Transfer", "Credit"].map((mode) => `
+            ${["Cash", "UPI", "Bank Transfer", "Advance", "Credit"].map((mode) => `
               <option value="${escapeAttr(mode)}" ${transaction.mode === mode ? "selected" : ""}>${mode}</option>
             `).join("")}
           </select>
@@ -1243,7 +1328,7 @@ function renderConsolidatedCreditDialog() {
                 ${field("consolidatedReceivedBy", "Received By", "text", draft.receivedBy || state.user.name || "", { placeholder: "Receiver name" })}
               </div>
               <div class="grid two">
-                ${selectField("consolidatedPaymentMode", "Payment Mode", ["Cash", "UPI", "Bank Transfer", "Credit"], draft.paymentMode || "Cash")}
+                ${selectField("consolidatedPaymentMode", "Payment Mode", ["Cash", "UPI", "Bank Transfer", "Advance", "Credit"], draft.paymentMode || "Cash")}
                 ${field("consolidatedDate", "Date", "date", draft.date || state.reviewDate, { readonly: true })}
               </div>
               ${textareaField("consolidatedNotes", "Notes (optional)", draft.notes || "", "Add note...", false)}
@@ -1276,7 +1361,7 @@ function renderDebitDialog() {
               ${field("debitAmount", "Amount (Rs.)", "number", draft.amount || "", { step: "0.01", placeholder: "0" })}
               <div class="grid two">
                 ${selectField("debitCategory", "Category", ["Miscellaneous", "Fuel", "Maintenance", "Staff", "Transport", "Office"], draft.category || "Miscellaneous")}
-                ${selectField("debitPaymentMode", "Payment Mode", ["Cash", "UPI", "Bank Transfer", "Credit"], draft.paymentMode || "Cash")}
+                ${selectField("debitPaymentMode", "Payment Mode", ["Cash", "UPI", "Bank Transfer","Advance", "Credit"], draft.paymentMode || "Cash")}
               </div>
               ${field("debitPaidTo", "Paid To", "text", draft.paidTo || "", { placeholder: "Person or vendor name", required: false })}
               ${textareaField("debitNotes", "Notes (optional)", draft.notes || "", "Additional details...", false)}
@@ -1353,36 +1438,38 @@ function renderPhotoSection(entry) {
 
 function renderDashboard() {
   const monthValue = state.dashboardMonth || "all";
-  const approved = state.entries.filter(isRevenueEligibleEntry);
-  const pending = state.entries.filter((entry) => entry.status === "Pending Review");
-  const today = new Date().toISOString().slice(0, 10);
-  const currentMonth = today.slice(0, 7);
   const selectedMonth = monthValue === "all" ? null : monthValue;
-  const activeMonth = selectedMonth || currentMonth;
-  const monthEntries = state.entries.filter((entry) => String(entry.date || "").startsWith(activeMonth));
-  const monthApproved = approved.filter((entry) => String(entry.date || "").startsWith(activeMonth));
-  const monthDebits = state.debitEntries.filter((entry) => String(entry.date || "").startsWith(activeMonth));
+  const monthEntries = selectedMonth
+    ? state.entries.filter((entry) => String(entry.date || "").startsWith(selectedMonth))
+    : state.entries.slice();
+  const monthDebits = selectedMonth
+    ? state.debitEntries.filter((entry) => String(entry.date || "").startsWith(selectedMonth))
+    : state.debitEntries.slice();
+  const monthApproved = monthEntries.filter(isRevenueEligibleEntry);
+  const pending = monthEntries.filter((entry) => entry.status === "Pending Review");
+  const today = TODAY_ISO;
   const todaysEntries = state.entries.filter((entry) => entry.date === today);
-  const todaysApproved = approved.filter((entry) => entry.date === today);
-  const todaysDebits = state.debitEntries.filter((entry) => entry.date === today);
-  const totalRevenue = sumAmount(approved, "totalAmountInclGst", "grossAmount", "amountPaid");
+  const todaysApproved = state.entries.filter((entry) => isRevenueEligibleEntry(entry) && entry.date === today);
+  const monthTodaysApproved = monthApproved.filter((entry) => entry.date === today);
+  const todaysDebits = monthDebits.filter((entry) => entry.date === today);
+  const totalRevenue = sumAmount(monthApproved, "totalAmountInclGst", "grossAmount", "amountPaid");
   const monthRevenue = sumAmount(monthApproved, "totalAmountInclGst", "grossAmount", "amountPaid");
   const todayRevenue = sumAmount(todaysApproved, "totalAmountInclGst", "grossAmount", "amountPaid");
-  const totalDebits = sumAmount(state.debitEntries, "amount");
+  const monthTodayRevenue = sumAmount(monthTodaysApproved, "totalAmountInclGst", "grossAmount", "amountPaid");
+  const totalDebits = sumAmount(monthDebits, "amount");
   const monthDebitTotal = sumAmount(monthDebits, "amount");
   const todayDebitTotal = sumAmount(todaysDebits, "amount");
-  const totalWeight = approved.reduce((sum, entry) => sum + Number(entry.netWeightTons || 0), 0);
-  const monthlyCreditSeries = monthlyRevenueSeries(approved);
-  const monthlyDebitSeries = monthlyRevenueSeries(state.debitEntries, "amount");
-  const last30Series = buildLast30DaySeries(state.entries, approved);
-  const vehicleBreakdown = distributionMap(monthEntries, (entry) => {
+  const totalWeight = monthApproved.reduce((sum, entry) => sum + Number(entry.netWeightTons || 0), 0);
+  const monthlyCreditSeries = monthlyRevenueSeries(monthApproved);
+  const monthlyDebitSeries = monthlyRevenueSeries(monthDebits, "amount");
+  const last30Series = buildLast30DaySeries(monthEntries, monthApproved);
+  const vehicleBreakdown = breakdownMap(monthEntries, (entry) => {
     if (entry.vehicleCategory === "Dumper") return "Dumper";
     if (entry.vehicleCategory === "Tractor" && entry.vehicleType) return `Tractor - ${entry.vehicleType}`;
     return entry.vehicleCategory || "Unknown";
-  });
-  const ownerBreakdown = distributionMap(monthEntries, (entry) => entry.ownerName || "Not Filled");
+  }, (entry) => Number(entry.totalAmountInclGst || entry.grossAmount || entry.amountPaid || 0));
   const paymentModes = paymentModeDistribution(monthApproved);
-  const recentActivity = state.entries
+  const recentActivity = monthEntries
     .slice()
     .sort((a, b) => String(b.entryTime || b.createdAt || "").localeCompare(String(a.entryTime || a.createdAt || "")))
     .slice(0, 5);
@@ -1405,25 +1492,25 @@ function renderDashboard() {
         ${dashboardMetricCard("Today's Trips", `${todaysEntries.length}`, "loading trips today", "blue")}
         ${dashboardMetricCard("Today's Revenue", `Rs ${formatMoney(todayRevenue)}`, "collected today", "green")}
         ${dashboardMetricCard("Pending Verification", `${pending.length}`, "awaiting review", "amber")}
-        ${dashboardMetricCard("Verified Entries", `${approved.length}`, "total verified", "mint")}
+        ${dashboardMetricCard("Verified Entries", `${monthApproved.length}`, "total verified", "mint")}
       </div>
 
       <div class="dashboard-section-label">All Time</div>
       <div class="dashboard-metric-grid">
-        ${dashboardMetricCard("Total Trips", `${state.entries.length}`, "all loading trips", "slate")}
-        ${dashboardMetricCard("Total Revenue", `Rs ${formatMoney(totalRevenue)}`, "total collected", "green")}
-        ${dashboardMetricCard(selectedMonth ? `${formatMonthLabel(selectedMonth)} Trips` : "This Month Trips", `${monthEntries.length}`, selectedMonth ? "selected month" : "current month", "violet")}
-        ${dashboardMetricCard("Sand Mined", `${formatWeight(totalWeight)} T`, "total net weight", "orange")}
+        ${dashboardMetricCard(selectedMonth ? `${formatMonthLabel(selectedMonth)} Trips` : "Total Trips", `${monthEntries.length}`, selectedMonth ? "selected month" : "all months", "slate")}
+        ${dashboardMetricCard(selectedMonth ? `${formatMonthLabel(selectedMonth)} Revenue` : "Total Revenue", `Rs ${formatMoney(totalRevenue)}`, selectedMonth ? "selected month" : "all months", "green")}
+        ${dashboardMetricCard(selectedMonth ? `${formatMonthLabel(selectedMonth)} Pending` : "Pending Verification", `${pending.length}`, selectedMonth ? "selected month" : "all months", "violet")}
+        ${dashboardMetricCard(selectedMonth ? `${formatMonthLabel(selectedMonth)} Sand` : "Sand Mined", `${formatWeight(totalWeight)} T`, selectedMonth ? "selected month" : "all months", "orange")}
       </div>
 
       <div class="dashboard-section-label">Credits vs Debits</div>
       <div class="dashboard-balance-grid">
-        ${dashboardBalanceCard("Gross Credits (Revenue)", `Rs ${formatMoney(totalRevenue)}`, `all time • ${approved.length} trips`, "green")}
-        ${dashboardBalanceCard("Total Debits (Expenses)", `Rs ${formatMoney(totalDebits)}`, `all time • ${state.debitEntries.length} entries`, "red")}
+        ${dashboardBalanceCard("Gross Credits (Revenue)", `Rs ${formatMoney(totalRevenue)}`, `${selectedMonth ? formatMonthLabel(selectedMonth) : "All months"} • ${monthApproved.length} trips`, "green")}
+        ${dashboardBalanceCard("Total Debits (Expenses)", `Rs ${formatMoney(totalDebits)}`, `${selectedMonth ? formatMonthLabel(selectedMonth) : "All months"} • ${monthDebits.length} entries`, "red")}
         ${dashboardBalanceCard("Net Position", `Rs ${formatMoney(totalRevenue - totalDebits)}`, "surplus · Credits - Debits", "slate")}
       </div>
       <div class="dashboard-mini-grid">
-        ${dashboardMiniCard("Today Credits", `Rs ${formatMoney(todayRevenue)}`, "green")}
+        ${dashboardMiniCard("Today Credits", `Rs ${formatMoney(monthTodayRevenue)}`, "green")}
         ${dashboardMiniCard("Today Debits", `Rs ${formatMoney(todayDebitTotal)}`, "red")}
         ${dashboardMiniCard(selectedMonth ? `${formatMonthLabel(selectedMonth)} Credits` : "This Month Credits", `Rs ${formatMoney(monthRevenue)}`, "blue")}
         ${dashboardMiniCard(selectedMonth ? `${formatMonthLabel(selectedMonth)} Debits` : "This Month Debits", `Rs ${formatMoney(monthDebitTotal)}`, "orange")}
@@ -1435,7 +1522,7 @@ function renderDashboard() {
       </div>
 
       <div class="dashboard-chart-block">
-        <h4>Daily Trips & Revenue - Last 30 Days</h4>
+        <h4>Daily Trips & Revenue</h4>
         ${renderLineChart(last30Series)}
       </div>
 
@@ -1450,9 +1537,8 @@ function renderDashboard() {
         </div>
       </div>
 
-      <div class="dashboard-chart-block">
-        <h4>Entries per Owner</h4>
-        ${renderBarChart(ownerBreakdown)}
+      <div class="dashboard-chart-block owner-transactions-widget">
+        ${renderOwnerTransactionsWidget(monthEntries)}
       </div>
 
       <div class="dashboard-split-grid">
@@ -1514,10 +1600,25 @@ function sumAmount(rows, ...keys) {
   }, 0);
 }
 
+function filterRowsByDateRange(rows, fromDate, toDate, dateKey = "date") {
+  const from = String(fromDate || "").slice(0, 10);
+  const to = String(toDate || "").slice(0, 10);
+  if (!from || !to) return rows;
+  return rows.filter((row) => {
+    const date = String(row?.[dateKey] || "").slice(0, 10);
+    return Boolean(date) && date >= from && date <= to;
+  });
+}
+
 function buildLast30DaySeries(entries, approvedEntries) {
-  const end = new Date();
-  const start = new Date(end);
-  start.setDate(end.getDate() - 29);
+  const dates = entries
+    .map((entry) => String(entry.date || "").slice(0, 10))
+    .filter(Boolean)
+    .sort();
+  if (!dates.length) return [];
+  const start = new Date(`${dates[0]}T00:00:00`);
+  const end = new Date(`${dates[dates.length - 1]}T00:00:00`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || start > end) return [];
   const tripMap = distributionMap(entries.filter((entry) => entry.date), (entry) => entry.date);
   const revenueMap = approvedEntries.reduce((acc, entry) => {
     const key = entry.date;
@@ -1553,6 +1654,17 @@ function distributionMap(rows, keyFn) {
   }, {});
 }
 
+function breakdownMap(rows, keyFn, amountFn) {
+  return rows.reduce((acc, row) => {
+    const key = keyFn(row) || "Unknown";
+    const amount = Number(amountFn(row) || 0);
+    if (!acc[key]) acc[key] = { count: 0, amount: 0 };
+    acc[key].count += 1;
+    acc[key].amount += amount;
+    return acc;
+  }, {});
+}
+
 function paymentModeDistribution(entries) {
   return entries.reduce((acc, entry) => {
     const key = entry.paymentMode || "Unknown";
@@ -1579,10 +1691,16 @@ function renderBarChart(primaryMap, secondaryMap = null) {
     const center = slot * index + slot / 2;
     const primaryHeight = (primaryValues[index] / maxValue) * barArea;
     const secondaryHeight = secondaryMap ? (secondaryValues[index] / maxValue) * barArea : 0;
+    const primaryValue = primaryValues[index];
+    const secondaryValue = secondaryValues[index];
+    const primaryX = center - (secondaryMap ? barWidth + 4 : barWidth / 2) + barWidth / 2;
+    const secondaryX = center + 4 + barWidth / 2;
     return `
       <g>
         <rect x="${center - (secondaryMap ? barWidth + 4 : barWidth / 2)}" y="${baseY - primaryHeight}" width="${barWidth}" height="${primaryHeight}" rx="4" class="chart-bar-primary"></rect>
         ${secondaryMap ? `<rect x="${center + 4}" y="${baseY - secondaryHeight}" width="${barWidth}" height="${secondaryHeight}" rx="4" class="chart-bar-secondary"></rect>` : ""}
+        <text x="${primaryX}" y="${Math.max(16, baseY - primaryHeight - 6)}" text-anchor="middle" class="chart-value-label">${formatMoney(primaryValue)}</text>
+        ${secondaryMap ? `<text x="${secondaryX}" y="${Math.max(16, baseY - secondaryHeight - 6)}" text-anchor="middle" class="chart-value-label">${formatMoney(secondaryValue)}</text>` : ""}
         <text x="${center}" y="208" text-anchor="middle" class="chart-axis-label">${formatMonthLabelShort(label)}</text>
       </g>
     `;
@@ -1621,6 +1739,19 @@ function renderLineChart(series) {
     const x = left + (index / Math.max(1, series.length - 1)) * usableWidth;
     return `<text x="${x}" y="232" text-anchor="middle" class="chart-axis-label">${item.label}</text>`;
   }).join("");
+  const pointLabels = series.map((item, index) => {
+    const x = left + (index / Math.max(1, series.length - 1)) * usableWidth;
+    const revenueY = bottom - (item.revenue / maxRevenue) * 150;
+    const tripsY = bottom - (item.trips / maxTrips) * 150;
+    return `
+      <g>
+        <circle cx="${x}" cy="${revenueY}" r="3" class="chart-point chart-point-revenue"></circle>
+        <text x="${x}" y="${Math.max(14, revenueY - 8)}" text-anchor="middle" class="chart-value-label">${formatMoney(item.revenue)}</text>
+        <circle cx="${x}" cy="${tripsY}" r="3" class="chart-point chart-point-trips"></circle>
+        <text x="${x}" y="${Math.max(14, tripsY - 8)}" text-anchor="middle" class="chart-value-label chart-value-label-muted">${item.trips}</text>
+      </g>
+    `;
+  }).join("");
   const gridLines = [0, 1, 2, 3, 4].map((step) => {
     const y = bottom - (step / 4) * 150;
     return `<line x1="${left}" y1="${y}" x2="${chartWidth - 28}" y2="${y}" class="chart-grid-line"></line>`;
@@ -1631,6 +1762,7 @@ function renderLineChart(series) {
         ${gridLines}
         <polyline points="${revenuePoints}" class="chart-line chart-line-revenue"></polyline>
         <polyline points="${tripPoints}" class="chart-line chart-line-trips"></polyline>
+        ${pointLabels}
         ${labels}
       </svg>
       <div class="chart-legend"><span><i class="legend-revenue"></i>Revenue (Rs)</span><span><i class="legend-trips"></i>Trips</span></div>
@@ -1639,13 +1771,15 @@ function renderLineChart(series) {
 }
 
 function renderDonutChart(map) {
-  const items = Object.entries(map).sort(([, a], [, b]) => b - a);
+  const items = Object.entries(map).sort(([, a], [, b]) => (b.amount || b) - (a.amount || a));
   if (!items.length) return `<div class="empty">No data available yet.</div>`;
-  const total = items.reduce((sum, [, value]) => sum + value, 0);
+  const totalCount = items.reduce((sum, [, value]) => sum + Number(value.count || value || 0), 0);
+  const totalRevenue = items.reduce((sum, [, value]) => sum + Number(value.amount || 0), 0);
   const colors = ["#64748b", "#94a3b8", "#0f766e", "#f59e0b", "#7c3aed", "#ef4444", "#10b981"];
   let offset = 0;
   const rings = items.map(([, value], index) => {
-    const length = (value / total) * 100;
+    const weight = Number(value.count || value || 0);
+    const length = (weight / Math.max(1, totalCount)) * 100;
     const dash = `${length} ${100 - length}`;
     const segment = `<circle cx="70" cy="70" r="52" fill="none" stroke="${colors[index % colors.length]}" stroke-width="22" stroke-dasharray="${dash}" stroke-dashoffset="${-offset}" pathLength="100"></circle>`;
     offset += length;
@@ -1656,14 +1790,148 @@ function renderDonutChart(map) {
       <svg viewBox="0 0 140 140" class="donut-chart" role="img" aria-label="Vehicle type breakdown">
         ${rings}
         <circle cx="70" cy="70" r="34" class="donut-hole"></circle>
-        <text x="70" y="66" text-anchor="middle" class="donut-total">${total}</text>
-        <text x="70" y="82" text-anchor="middle" class="donut-subtitle">entries</text>
+        <text x="70" y="59" text-anchor="middle" class="donut-subtitle">Revenue</text>
+        <text x="70" y="76" text-anchor="middle" class="donut-total">Rs ${formatMoney(totalRevenue)}</text>
+        <text x="70" y="92" text-anchor="middle" class="donut-subtitle">${totalCount} entries</text>
       </svg>
       <div class="chart-legend stacked">
-        ${items.map(([label, value], index) => `<span><i style="background:${colors[index % colors.length]}"></i>${label} ${Math.round((value / total) * 100)}%</span>`).join("")}
+        ${items.map(([label, value], index) => {
+          const count = Number(value.count || value || 0);
+          const amount = Number(value.amount || 0);
+          const percentage = Math.round((count / Math.max(1, totalCount)) * 100);
+          return `<span><i style="background:${colors[index % colors.length]}"></i>${label} ${count} trips • Rs ${formatMoney(amount)} (${percentage}%)</span>`;
+        }).join("")}
       </div>
     </div>
   `;
+}
+
+function renderOwnerTransactionsWidget(entries) {
+  const ownerCategoryMap = entries.reduce((acc, entry) => {
+    const ownerName = String(entry.ownerName || "Not Filled").trim() || "Not Filled";
+    const vehicleCategory = String(entry.vehicleCategory || "Unknown").trim() || "Unknown";
+    const key = `${ownerName}__${vehicleCategory}`;
+    if (!acc[key]) {
+      acc[key] = {
+        ownerName,
+        vehicleCategory,
+        transactions: 0,
+        revenue: 0
+      };
+    }
+    acc[key].transactions += 1;
+    acc[key].revenue += Number(entry.totalAmountInclGst || entry.grossAmount || entry.amountPaid || 0);
+    return acc;
+  }, {});
+
+  const rows = Object.values(ownerCategoryMap)
+    .sort((a, b) => b.transactions - a.transactions || a.ownerName.localeCompare(b.ownerName, undefined, { sensitivity: "base" }) || a.vehicleCategory.localeCompare(b.vehicleCategory, undefined, { sensitivity: "base" }))
+    .map((row) => ({
+      ownerName: row.ownerName,
+      vehicleCategory: row.vehicleCategory,
+      transactions: row.transactions,
+      monthlyRevenue: row.revenue
+    }));
+
+  const categoryOptions = Array.from(new Set(rows.map((row) => row.vehicleCategory).filter(Boolean))).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+  const ownerQuery = String(state.dashboardOwnerFilterOwner || "").trim().toLowerCase();
+  const categoryFilter = String(state.dashboardOwnerFilterCategory || "all");
+  const transactionFilter = String(state.dashboardOwnerFilterTransactions || "all");
+  const revenueFilter = String(state.dashboardOwnerFilterRevenue || "all");
+
+  const filteredRows = rows.filter((row) => {
+    const ownerMatch = !ownerQuery || row.ownerName.toLowerCase().includes(ownerQuery);
+    const categoryMatch = categoryFilter === "all" || row.vehicleCategory === categoryFilter;
+    const transactionMatch = transactionFilter === "all"
+      || (transactionFilter === "100_plus" && row.transactions >= 100)
+      || (transactionFilter === "50_99" && row.transactions >= 50 && row.transactions <= 99)
+      || (transactionFilter === "below_50" && row.transactions < 50);
+    const revenueMatch = revenueFilter === "all"
+      || (revenueFilter === "500000_plus" && row.monthlyRevenue >= 500000)
+      || (revenueFilter === "200000_499999" && row.monthlyRevenue >= 200000 && row.monthlyRevenue < 500000)
+      || (revenueFilter === "below_200000" && row.monthlyRevenue < 200000);
+    return ownerMatch && categoryMatch && transactionMatch && revenueMatch;
+  });
+
+  const limitedRows = filteredRows.slice(0, 10);
+  const pageSize = 5;
+  const totalPages = Math.max(1, Math.ceil(limitedRows.length / pageSize));
+  const safePage = Math.min(Math.max(1, Number(state.dashboardOwnerPage || 1)), totalPages);
+  const start = (safePage - 1) * pageSize;
+  const pageRows = limitedRows.slice(start, start + pageSize);
+  state.dashboardOwnerPage = safePage;
+
+  return `
+    <div class="owner-widget-head">
+      <h4>Top 10 Owners by Monthly Transactions</h4>
+      <div class="owner-widget-filter-wrap">
+        <input id="dashboardOwnerFilterOwner" type="text" placeholder="Owner name" value="${escapeAttr(state.dashboardOwnerFilterOwner || "")}" aria-label="Filter by owner name">
+        <select id="dashboardOwnerFilterCategory" aria-label="Filter by vehicle category">
+          <option value="all" ${categoryFilter === "all" ? "selected" : ""}>All Categories</option>
+          ${categoryOptions.map((category) => `<option value="${escapeAttr(category)}" ${categoryFilter === category ? "selected" : ""}>${escapeHtml(category)}</option>`).join("")}
+        </select>
+        <select id="dashboardOwnerFilterTransactions" aria-label="Filter by transactions">
+          <option value="all" ${transactionFilter === "all" ? "selected" : ""}>All Transactions</option>
+          <option value="100_plus" ${transactionFilter === "100_plus" ? "selected" : ""}>100+</option>
+          <option value="50_99" ${transactionFilter === "50_99" ? "selected" : ""}>50-99</option>
+          <option value="below_50" ${transactionFilter === "below_50" ? "selected" : ""}>Below 50</option>
+        </select>
+        <select id="dashboardOwnerFilterRevenue" aria-label="Filter by monthly revenue">
+          <option value="all" ${revenueFilter === "all" ? "selected" : ""}>All Revenue</option>
+          <option value="500000_plus" ${revenueFilter === "500000_plus" ? "selected" : ""}>Rs 5,00,000+</option>
+          <option value="200000_499999" ${revenueFilter === "200000_499999" ? "selected" : ""}>Rs 2,00,000 - 4,99,999</option>
+          <option value="below_200000" ${revenueFilter === "below_200000" ? "selected" : ""}>Below Rs 2,00,000</option>
+        </select>
+      </div>
+    </div>
+    <div class="owner-widget-table-wrap">
+      <table class="owner-widget-table">
+        <thead>
+          <tr>
+            <th>Owner Name <span class="sort-hint">↕</span></th>
+            <th>Transactions <span class="sort-hint">↕</span></th>
+            <th>Vehicle Category <span class="sort-hint">↕</span></th>
+            <th>Monthly Revenue <span class="sort-hint">↕</span></th>
+          </tr>
+        </thead>
+        <tbody>
+          ${pageRows.length ? pageRows.map((row) => `
+            <tr>
+              <td>${escapeHtml(row.ownerName)}</td>
+              <td>${row.transactions}</td>
+              <td>${escapeHtml(row.vehicleCategory)}</td>
+              <td>Rs ${formatMoney(row.monthlyRevenue)}</td>
+            </tr>
+          `).join("") : `<tr><td colspan="4" class="owner-widget-empty">No owners match current filters.</td></tr>`}
+        </tbody>
+      </table>
+    </div>
+    <div class="owner-widget-footer">
+      <span>Page ${safePage} of ${totalPages}</span>
+      <div class="owner-widget-pagination">
+        <button type="button" id="ownerWidgetPrev" class="owner-page-btn" ${safePage <= 1 ? "disabled" : ""} aria-label="Previous page">‹</button>
+        <button type="button" id="ownerWidgetNext" class="owner-page-btn" ${safePage >= totalPages ? "disabled" : ""} aria-label="Next page">›</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderAppPreservingViewport(options = {}) {
+  const { focusSelector = "", cursorAtEnd = false } = options;
+  const scrollX = window.scrollX;
+  const scrollY = window.scrollY;
+  renderApp();
+  window.scrollTo(scrollX, scrollY);
+  if (focusSelector) {
+    const target = document.querySelector(focusSelector);
+    if (target && typeof target.focus === "function") {
+      target.focus({ preventScroll: true });
+      if (cursorAtEnd && typeof target.value === "string" && typeof target.setSelectionRange === "function") {
+        const end = target.value.length;
+        target.setSelectionRange(end, end);
+      }
+    }
+  }
 }
 
 function renderPaymentModeList(map) {
@@ -1934,6 +2202,40 @@ function bindView() {
     renderApp();
   });
 
+  document.querySelector("#dashboardOwnerFilterOwner")?.addEventListener("input", (event) => {
+    state.dashboardOwnerFilterOwner = String(event.currentTarget.value || "");
+    state.dashboardOwnerPage = 1;
+    renderAppPreservingViewport({ focusSelector: "#dashboardOwnerFilterOwner", cursorAtEnd: true });
+  });
+
+  document.querySelector("#dashboardOwnerFilterCategory")?.addEventListener("change", (event) => {
+    state.dashboardOwnerFilterCategory = String(event.currentTarget.value || "all");
+    state.dashboardOwnerPage = 1;
+    renderAppPreservingViewport({ focusSelector: "#dashboardOwnerFilterCategory" });
+  });
+
+  document.querySelector("#dashboardOwnerFilterTransactions")?.addEventListener("change", (event) => {
+    state.dashboardOwnerFilterTransactions = String(event.currentTarget.value || "all");
+    state.dashboardOwnerPage = 1;
+    renderAppPreservingViewport({ focusSelector: "#dashboardOwnerFilterTransactions" });
+  });
+
+  document.querySelector("#dashboardOwnerFilterRevenue")?.addEventListener("change", (event) => {
+    state.dashboardOwnerFilterRevenue = String(event.currentTarget.value || "all");
+    state.dashboardOwnerPage = 1;
+    renderAppPreservingViewport({ focusSelector: "#dashboardOwnerFilterRevenue" });
+  });
+
+  document.querySelector("#ownerWidgetPrev")?.addEventListener("click", () => {
+    state.dashboardOwnerPage = Math.max(1, Number(state.dashboardOwnerPage || 1) - 1);
+    renderAppPreservingViewport();
+  });
+
+  document.querySelector("#ownerWidgetNext")?.addEventListener("click", () => {
+    state.dashboardOwnerPage = Number(state.dashboardOwnerPage || 1) + 1;
+    renderAppPreservingViewport();
+  });
+
   document.querySelectorAll("[data-admin-tab]").forEach((button) => {
     button.addEventListener("click", () => {
       state.adminTab = button.dataset.adminTab;
@@ -1959,6 +2261,7 @@ function bindView() {
     state.reviewOwnerFilter = event.currentTarget.value || "";
     state.selectedReviewIds = [];
     state.selectedEntry = null;
+    state.reviewPage = 1;
     renderApp();
   });
 
@@ -1966,6 +2269,32 @@ function bindView() {
     state.reviewPaymentFilter = event.currentTarget.value || "";
     state.selectedReviewIds = [];
     state.selectedEntry = null;
+    state.reviewPage = 1;
+    renderApp();
+  });
+
+  document.querySelector("#reviewVehicleCategoryFilter")?.addEventListener("change", (event) => {
+    state.reviewVehicleCategoryFilter = event.currentTarget.value || "";
+    state.selectedReviewIds = [];
+    state.selectedEntry = null;
+    state.reviewPage = 1;
+    renderApp();
+  });
+
+  document.querySelector("#reviewPageSize")?.addEventListener("change", (event) => {
+    const nextSize = Number(event.currentTarget.value || 10);
+    state.reviewPageSize = REVIEW_PAGE_SIZE_OPTIONS.includes(nextSize) ? nextSize : 10;
+    state.reviewPage = 1;
+    renderApp();
+  });
+
+  document.querySelector("#reviewPagePrev")?.addEventListener("click", () => {
+    state.reviewPage = Math.max(1, Number(state.reviewPage || 1) - 1);
+    renderApp();
+  });
+
+  document.querySelector("#reviewPageNext")?.addEventListener("click", () => {
+    state.reviewPage = Number(state.reviewPage || 1) + 1;
     renderApp();
   });
 
@@ -1987,6 +2316,7 @@ function bindView() {
       if (badge) badge.textContent = `Total incl. GST: Rs. ${formatMoney(total)}`;
     };
     entryForm.addEventListener("input", updateTotal);
+    setupOwnerSearchDropdown(entryForm);
     entryForm.addEventListener("change", () => syncOwnerDetails(entryForm));
     entryForm.querySelector("[name='vehicleCategory']")?.addEventListener("change", () => syncVehicleTypeField(entryForm));
     updateTotal();
@@ -2053,6 +2383,7 @@ function bindView() {
       state.reviewDate = button.dataset.reviewDate;
       state.selectedEntry = null;
       state.selectedReviewIds = [];
+      state.reviewPage = 1;
       renderApp();
     });
   });
@@ -2065,6 +2396,7 @@ function bindView() {
       state.reviewDate = next.toISOString().slice(0, 10);
       state.selectedEntry = null;
       state.selectedReviewIds = [];
+      state.reviewPage = 1;
       renderApp();
     });
   });
@@ -2074,9 +2406,11 @@ function bindView() {
       state.reviewFilter = button.dataset.reviewFilter;
       state.selectedEntry = null;
       state.selectedReviewIds = [];
+      state.reviewPage = 1;
       if (["Consolidated Credits", "Debit Entries"].includes(state.reviewFilter)) {
         state.reviewOwnerFilter = "";
         state.reviewPaymentFilter = "";
+        state.reviewVehicleCategoryFilter = "";
       }
       renderApp();
     });
@@ -2429,6 +2763,102 @@ function bindView() {
   });
 }
 
+function setupOwnerSearchDropdown(form) {
+  const wrapper = form.querySelector("[data-owner-dropdown]");
+  if (!wrapper) return;
+  const hiddenInput = form.querySelector("[name='ownerName']");
+  const searchInput = wrapper.querySelector("[data-owner-search-input]");
+  const list = wrapper.querySelector("[data-owner-dropdown-list]");
+  const toggle = wrapper.querySelector("[data-owner-dropdown-toggle]");
+  const options = Array.from(wrapper.querySelectorAll("[data-owner-option]"));
+  const empty = wrapper.querySelector("[data-owner-empty]");
+  if (!hiddenInput || !searchInput || !list || !toggle) return;
+  const optionValues = options.map((option) => String(option.textContent || option.dataset.ownerOption || "").trim());
+
+  const setOwnerName = (value) => {
+    hiddenInput.value = value;
+    searchInput.value = value;
+    syncOwnerDetails(form);
+  };
+
+  const openList = () => {
+    list.hidden = false;
+    wrapper.classList.add("open");
+  };
+
+  const closeList = () => {
+    list.hidden = true;
+    wrapper.classList.remove("open");
+  };
+
+  const filterOptions = () => {
+    const query = String(searchInput.value || "").trim().toLowerCase();
+    let visible = 0;
+    options.forEach((option, index) => {
+      const value = String(optionValues[index] || "");
+      const matches = !query || value.toLowerCase().includes(query);
+      option.hidden = !matches;
+      option.style.display = matches ? "" : "none";
+      if (matches) visible += 1;
+    });
+    if (empty) empty.hidden = visible > 0;
+  };
+
+  searchInput.addEventListener("focus", () => {
+    openList();
+    filterOptions();
+  });
+
+  searchInput.addEventListener("input", () => {
+    hiddenInput.value = String(searchInput.value || "").trim();
+    syncOwnerDetails(form);
+    openList();
+    filterOptions();
+  });
+
+  searchInput.addEventListener("keyup", () => {
+    openList();
+    filterOptions();
+  });
+
+  searchInput.addEventListener("search", () => {
+    openList();
+    filterOptions();
+  });
+
+  toggle.addEventListener("click", () => {
+    if (list.hidden) {
+      openList();
+      filterOptions();
+      searchInput.focus({ preventScroll: true });
+    } else {
+      closeList();
+    }
+  });
+
+  options.forEach((option) => {
+    option.addEventListener("click", () => {
+      const selected = String(option.dataset.ownerOption || "");
+      setOwnerName(selected);
+      closeList();
+      searchInput.focus({ preventScroll: true });
+    });
+  });
+
+  wrapper.addEventListener("focusout", () => {
+    setTimeout(() => {
+      if (!wrapper.contains(document.activeElement)) closeList();
+    }, 0);
+  });
+
+  searchInput.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") closeList();
+  });
+
+  setOwnerName(String(hiddenInput.value || "").trim());
+  filterOptions();
+}
+
 async function formPayload(form) {
   const formData = new FormData();
   const rawFormData = new FormData(form);
@@ -2562,8 +2992,8 @@ async function loadNextReceipt() {
 }
 
 function syncOwnerDetails(form) {
-  const ownerName = new FormData(form).get("ownerName");
-  const owner = state.owners.find((item) => item.name === ownerName);
+  const ownerName = String(new FormData(form).get("ownerName") || "").trim();
+  const owner = state.owners.find((item) => String(item.name || "").trim().toLowerCase() === ownerName.toLowerCase());
   const phoneInput = form.querySelector("[name='ownerPhone']");
   const addressInput = form.querySelector("[name='ownerAddress']");
   if (!phoneInput || !addressInput) return;
@@ -2604,6 +3034,7 @@ function applyReviewAttributeFilters(records) {
     if (record.recordType) return true;
     if (state.reviewOwnerFilter && (record.ownerName || "") !== state.reviewOwnerFilter) return false;
     if (state.reviewPaymentFilter && (record.paymentMode || "") !== state.reviewPaymentFilter) return false;
+    if (state.reviewVehicleCategoryFilter && (record.vehicleCategory || "") !== state.reviewVehicleCategoryFilter) return false;
     return true;
   });
 }

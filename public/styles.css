@@ -376,6 +376,10 @@ button svg,
   min-width: 170px;
 }
 
+.dashboard-head-actions input[type="date"] {
+  min-width: 170px;
+}
+
 .dashboard-section-label {
   font-size: 11px;
   font-weight: 800;
@@ -573,6 +577,122 @@ button svg,
   overflow: hidden;
 }
 
+.owner-transactions-widget {
+  padding: 0;
+}
+
+.owner-widget-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 18px 18px 14px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.owner-widget-head h4 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 800;
+  color: #0f172a;
+}
+
+.owner-widget-filter-wrap {
+  width: min(780px, 100%);
+  display: grid;
+  grid-template-columns: minmax(180px, 1.5fr) repeat(3, minmax(140px, 1fr));
+  gap: 8px;
+}
+
+.owner-widget-filter-wrap input,
+.owner-widget-filter-wrap select {
+  border-radius: 14px;
+  height: 42px;
+  border: 1px solid #dbe2ea;
+  padding: 0 14px;
+  background: #ffffff;
+}
+
+.owner-widget-table-wrap {
+  padding: 16px 18px 12px;
+}
+
+.owner-widget-table {
+  min-width: 760px;
+  border-collapse: separate;
+  border-spacing: 0;
+  border: 1px solid #dbe2ea;
+  border-radius: 14px;
+  overflow: hidden;
+}
+
+.owner-widget-table th,
+.owner-widget-table td {
+  padding: 14px 20px;
+  border-bottom: 1px solid #e5e7eb;
+  font-size: 15px;
+  color: #415775;
+}
+
+.owner-widget-table th {
+  background: #f5f8fc;
+  color: #0f172a;
+  text-transform: none;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.owner-widget-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.owner-widget-empty {
+  text-align: center;
+  color: #64748b;
+}
+
+.sort-hint {
+  color: #64748b;
+  font-size: 14px;
+  margin-left: 6px;
+}
+
+.owner-widget-footer {
+  padding: 6px 18px 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #415775;
+}
+
+.owner-widget-footer span {
+  font-size: 14px;
+}
+
+.owner-widget-pagination {
+  display: inline-flex;
+  gap: 8px;
+}
+
+.owner-page-btn {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  border: 1px solid #dbe2ea;
+  background: #ffffff;
+  color: #334155;
+  font-size: 28px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.owner-page-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .dashboard-tone-green {
   border-color: #b7ebc6;
 }
@@ -629,6 +749,16 @@ button svg,
   font-family: Inter, Segoe UI, Arial, sans-serif;
 }
 
+.chart-value-label {
+  fill: #0f172a;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.chart-value-label-muted {
+  fill: #334155;
+}
+
 .chart-bar-primary {
   fill: #a8adb8;
 }
@@ -648,6 +778,20 @@ button svg,
 
 .chart-line-trips {
   stroke: #4b5563;
+}
+
+.chart-point {
+  stroke-width: 1.5;
+}
+
+.chart-point-revenue {
+  fill: #0f766e;
+  stroke: #ffffff;
+}
+
+.chart-point-trips {
+  fill: #f59e0b;
+  stroke: #ffffff;
 }
 
 .chart-legend {
@@ -707,7 +851,7 @@ button svg,
 
 .donut-total {
   fill: var(--ink);
-  font-size: 18px;
+  font-size: 13px;
   font-weight: 800;
 }
 
@@ -801,6 +945,68 @@ textarea {
   padding: 10px 12px;
   background: white;
   color: var(--ink);
+}
+
+.owner-dropdown {
+  position: relative;
+}
+
+.owner-search-input {
+  padding-right: 40px;
+}
+
+.owner-dropdown-toggle {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  border: 0;
+  background: transparent;
+  width: 30px;
+  height: 30px;
+  border-radius: 6px;
+  color: #475467;
+  font-size: 14px;
+}
+
+.owner-dropdown-list {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + 6px);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 8px 22px rgba(15, 23, 42, 0.14);
+  max-height: 240px;
+  overflow-y: auto;
+  z-index: 30;
+}
+
+.owner-dropdown-option {
+  width: 100%;
+  text-align: left;
+  border: 0;
+  border-bottom: 1px solid #eef1f4;
+  background: #fff;
+  padding: 11px 12px;
+  font-size: 14px;
+  color: #0f172a;
+}
+
+.owner-dropdown-option:last-child {
+  border-bottom: 0;
+}
+
+.owner-dropdown-option:hover,
+.owner-dropdown-option:focus-visible {
+  background: #f8fafc;
+}
+
+.owner-dropdown-empty {
+  padding: 12px;
+  color: #667085;
+  font-size: 13px;
 }
 
 textarea {
@@ -1205,6 +1411,38 @@ th {
   margin: 0;
 }
 
+.review-pagination-toolbar {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+
+.review-page-size-field {
+  min-width: 160px;
+  max-width: 220px;
+}
+
+.review-pagination-meta {
+  font-size: 13px;
+  color: #475467;
+  font-weight: 600;
+}
+
+.review-pagination-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.review-pagination-page {
+  font-size: 13px;
+  color: #344054;
+  font-weight: 700;
+}
+
 .review-entry-list {
   display: grid;
   gap: 10px;
@@ -1220,8 +1458,18 @@ th {
 .review-attribute-filters {
   display: grid;
   gap: 12px;
-  grid-template-columns: repeat(2, minmax(0, 220px));
+  grid-template-columns: repeat(3, minmax(0, 220px));
   margin-bottom: 14px;
+}
+
+.review-filter-revenue {
+  margin: -4px 0 14px;
+  font-size: 13px;
+  color: #334155;
+}
+
+.review-filter-revenue strong {
+  color: #0f172a;
 }
 
 .review-selection-bar {
@@ -1808,6 +2056,21 @@ th {
     grid-template-columns: 1fr;
   }
 
+  .review-pagination-toolbar {
+    align-items: stretch;
+  }
+
+  .review-page-size-field {
+    min-width: 0;
+    max-width: none;
+    width: 100%;
+  }
+
+  .review-pagination-actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+
   .review-dialog-backdrop {
     padding: 12px;
     align-items: end;
@@ -1864,11 +2127,46 @@ th {
   }
 
   .dashboard-head-actions select,
+  .dashboard-head-actions input,
   .dashboard-head-actions button {
     width: 100%;
   }
 
   .dashboard-chart-svg {
     min-width: 640px;
+  }
+
+  .owner-widget-head {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .owner-widget-filter-wrap {
+    width: 100%;
+    grid-template-columns: 1fr;
+  }
+
+  .owner-widget-table th,
+  .owner-widget-table td {
+    padding: 10px 12px;
+    font-size: 12px;
+  }
+
+  .owner-widget-table th {
+    font-size: 12px;
+  }
+
+  .sort-hint {
+    font-size: 11px;
+  }
+
+  .owner-widget-footer span {
+    font-size: 12px;
+  }
+
+  .owner-page-btn {
+    width: 36px;
+    height: 36px;
+    font-size: 20px;
   }
 }

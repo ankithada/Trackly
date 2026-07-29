@@ -1255,21 +1255,17 @@ async function readOwners() {
     address: row["Owner Address"] || "",
     currentBalance: row["Current Balance"] || "0"
   }));
-
-  const needsDerivedBalance = owners.some((owner) => ownerCurrentBalanceValue(owner) <= 0);
-  if (!needsDerivedBalance) return owners;
-
   const [ownerAdvanceCreditByOwner, ownerAdvanceUsedByOwner] = await Promise.all([
     totalOwnerAdvanceCreditByOwner(),
     totalOwnerAdvanceUsedByOwner()
   ]);
 
   return owners.map((owner) => {
-    const existingBalance = ownerCurrentBalanceValue(owner);
-    if (existingBalance > 0) return owner;
     const ownerKey = normalizeOwnerBalanceKey(owner.name);
     const totalAdvanceCredit = ownerAdvanceCreditByOwner.get(ownerKey) || 0;
     const totalAdvanceUsed = ownerAdvanceUsedByOwner.get(ownerKey) || 0;
+    const hasAdvanceActivity = totalAdvanceCredit > 0 || totalAdvanceUsed > 0;
+    if (!hasAdvanceActivity) return owner;
     const derivedBalance = Math.max(0, Number((totalAdvanceCredit - totalAdvanceUsed).toFixed(2)));
     return {
       ...owner,
@@ -1668,9 +1664,15 @@ function ownerNameMatches(left, right) {
 function ownerCurrentBalanceValue(owner) {
   const parsed = Number(owner?.currentBalance || 0);
   return Number.isFinite(parsed) ? Number(parsed.toFixed(2)) : 0;
+  
+}
+
+function isRejectedEntry(entry = {}) {
+  return String(entry?.status || "").trim().toLowerCase() === "rejected";
 }
 
 function entryAdvanceUsage(entry = {}) {
+  if (isRejectedEntry(entry)) return 0;
   const transactions = Array.isArray(entry.transactions) ? entry.transactions : [];
   if (transactions.length) {
     const total = transactions.reduce((sum, transaction) => {
@@ -1681,6 +1683,35 @@ function entryAdvanceUsage(entry = {}) {
   }
   if (!ownerNameMatches(entry.paymentMode, "Advance")) return 0;
   return Number(Number(entry.amountPaid || entry.transactionTotal || 0).toFixed(2));
+}
+
+async function calculateOwnerCurrentBalance(ownerName) {
+  const ownerKey = normalizeOwnerBalanceKey(ownerName);
+  if (!ownerKey) return 0;
+  const [ownerAdvanceCreditByOwner, ownerAdvanceUsedByOwner] = await Promise.all([
+    totalOwnerAdvanceCreditByOwner(),
+    totalOwnerAdvanceUsedByOwner()
+  ]);
+  const totalAdvanceCredit = ownerAdvanceCreditByOwner.get(ownerKey) || 0;
+  const totalAdvanceUsed = ownerAdvanceUsedByOwner.get(ownerKey) || 0;
+  return Math.max(0, Number((totalAdvanceCredit - totalAdvanceUsed).toFixed(2)));
+}
+
+async function refreshOwnerCurrentBalance(ownerName) {
+  const owners = await readOwners();
+  const index = owners.findIndex((owner) => ownerNameMatches(owner.name, ownerName));
+  if (index === -1) {
+    const error = new Error(`Owner ${ownerName} not found in Owner Master`);
+    error.status = 400;
+    throw error;
+  }
+  const nextBalance = await calculateOwnerCurrentBalance(owners[index].name);
+  owners[index] = {
+    ...owners[index],
+    currentBalance: String(nextBalance.toFixed(2))
+  };
+  await writeOwners(owners);
+  return owners[index];
 }
 
 async function setOwnerCurrentBalance(ownerName, nextBalance) {
@@ -1740,6 +1771,7 @@ async function applyEntryAdvanceTransition(previousEntry, nextEntry) {
   if (ownerNameMatches(previousOwner, nextOwner)) {
     const delta = Number((nextUsage - previousUsage).toFixed(2));
     if (delta !== 0) await applyOwnerAdvanceUsage(nextOwner, delta);
+    if (nextOwner) await refreshOwnerCurrentBalance(nextOwner);
     return;
   }
 
@@ -1748,6 +1780,14 @@ async function applyEntryAdvanceTransition(previousEntry, nextEntry) {
   }
   if (nextUsage > 0 && nextOwner) {
     await applyOwnerAdvanceUsage(nextOwner, nextUsage);
+  }
+
+  const ownerNamesToRefresh = Array.from(new Set([
+    String(previousOwner || "").trim(),
+    String(nextOwner || "").trim()
+  ].filter(Boolean)));
+  for (const ownerName of ownerNamesToRefresh) {
+    await refreshOwnerCurrentBalance(ownerName);
   }
 }
 
@@ -2793,6 +2833,8 @@ async function handleApi(req, res, user, pathname) {
     };
 
     await appendOwnerAdvance(ownerAdvance);
+    const refreshedOwner = await refreshOwnerCurrentBalance(ownerName);
+    ownerAdvance.currentBalance = refreshedOwner.currentBalance || ownerAdvance.currentBalance;
     return send(res, 201, { ownerAdvance });
   }
 
@@ -2818,6 +2860,8 @@ async function handleApi(req, res, user, pathname) {
     const index = ownerAdvances.findIndex((entry) => entry.ownerAdvanceId === ownerAdvanceId);
     if (index === -1) return sendError(res, 404, "Owner advance not found");
 
+    const previousOwnerName = String(ownerAdvances[index].ownerName || "").trim();
+
     let nextBalance = ownerAdvances[index].currentBalance || "";
     if (hasCurrentBalanceInput) {
       const ownerRecord = await setOwnerCurrentBalance(ownerName, currentBalanceInput);
@@ -2835,6 +2879,16 @@ async function handleApi(req, res, user, pathname) {
     };
     ownerAdvances[index] = updated;
     await writeOwnerAdvances(ownerAdvances);
+    const ownerNamesToRefresh = Array.from(new Set([
+      previousOwnerName,
+      ownerName
+    ].filter(Boolean)));
+    for (const targetOwnerName of ownerNamesToRefresh) {
+      const refreshedOwner = await refreshOwnerCurrentBalance(targetOwnerName);
+      if (ownerNameMatches(targetOwnerName, ownerName)) {
+        updated.currentBalance = refreshedOwner.currentBalance || updated.currentBalance;
+      }
+    }
     return send(res, 200, { ownerAdvance: updated });
   }
 
@@ -2873,37 +2927,26 @@ async function handleApi(req, res, user, pathname) {
       await applyEntryAdvanceTransition(entries[index], updated);
       entries[index] = updated;
       await writeEntries(entries);
+      const reviewedTransactions = Array.isArray(updated.transactions) ? updated.transactions : [];
+      const reviewedSummary = updated.transactionSummary || transactionSummary(reviewedTransactions);
+      const reviewedTotal = updated.transactionTotal || String(transactionTotal(reviewedTransactions));
+      const reviewedNotes = String(updated.reviewerNotes || "");
       await upsertReviewedEntry({
-        receiptNumber: selectedEntry.receiptNumber,
-        reviewedAt,
-        status,
-        reviewedBy,
-        totalAmountInclGst: String(totalAmountInclGstValue),
-        transactionTotal: transactionTotalText,
-        transactionCount: String(transactions.length),
-        transactions,
-        transactionSummary: transactionSummary(transactions),
-        reviewerNotes
+        receiptNumber: updated.receiptNumber,
+        reviewedAt: updated.reviewedAt,
+        status: updated.status,
+        reviewedBy: updated.reviewedBy,
+        totalAmountInclGst: String(updated.totalAmountInclGst || 0),
+        transactionTotal: String(reviewedTotal),
+        transactionCount: String(reviewedTransactions.length),
+        transactions: reviewedTransactions,
+        transactionSummary: reviewedSummary,
+        reviewerNotes: reviewedNotes
       });
 
-      await audit(selectedEntry.id, user, `reviewed:${status}`, reviewerNotes);
+      await audit(updated.id, user, `reviewed:${updated.status}`, reviewedNotes);
 
-      const responseEntry = {
-        ...selectedEntry,
-        status,
-        paymentStatus: status,
-        reviewedBy,
-        reviewedAt,
-        reviewerNotes,
-        transactions,
-        transactionSummary: transactionSummary(transactions),
-        transactionTotal: transactionTotalText,
-        amountPaid: String(amountPaidValue),
-        totalAmountInclGst: String(totalAmountInclGstValue),
-        paymentMode
-      };
-
-      return send(res, 200, { entry: publicEntry(responseEntry) });
+      return send(res, 200, { entry: publicEntry(updated) });
     }
 
     if (req.method === "PATCH") {

@@ -40,6 +40,7 @@ const state = {
   dashboardOwnerFilterRevenue: "all",
   dashboardOwnerPage: 1,
   reviewSidebarOpen: true,
+  hrData: null,
   reviewOwnerFilter: "",
   reviewPaymentFilter: "",
   reviewVehicleCategoryFilter: "",
@@ -53,14 +54,15 @@ const roleViews = {
   staff: ["entry"],
   reviewer: ["entry", "review", "admin"],
   analyst: ["dashboard"],
-  admin: ["dashboard", "entry", "review", "admin"]
+  admin: ["dashboard", "entry", "review", "admin", "hr"]
 };
 
 const titles = {
   dashboard: "Revenue Dashboard",
   entry: "Daily Loading Entry",
   review: "Reviewer Queue",
-  admin: "User Administration"
+  admin: "User Administration",
+  hr: "HR Module"
 };
 
 const contractBrandLines = [

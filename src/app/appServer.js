@@ -12,6 +12,7 @@ const { handleRoutes: handleFleetRoutes } = require("../features/fleet/routes");
 const { handleRoutes: handleEntryRoutes } = require("../features/entries/routes");
 const { handleRoutes: handleUserRoutes } = require("../features/users/routes");
 const { handleRoutes: handleFinanceRoutes } = require("../features/finance/routes");
+const { handleRoutes: handleHrRoutes } = require("../features/hr/routes");
 const {
   serializeError,
   shouldRetryGoogleTokenError,
@@ -2429,7 +2430,8 @@ async function handleApi(req, res, user, pathname) {
     || await handleFleetRoutes(req, res, user, pathname, featureContext)
     || await handleEntryRoutes(req, res, user, pathname, featureContext)
     || await handleUserRoutes(req, res, user, pathname, featureContext)
-    || await handleFinanceRoutes(req, res, user, pathname, featureContext);
+    || await handleFinanceRoutes(req, res, user, pathname, featureContext)
+    || await handleHrRoutes(req, res, user, pathname, featureContext);
 
   if (handled) return;
   return sendError(res, 404, "API route not found");

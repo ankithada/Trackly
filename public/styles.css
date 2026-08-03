@@ -780,9 +780,23 @@ button svg,
   overflow-y: hidden;
 }
 
+.chart-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #475467;
+}
+
+.chart-summary strong {
+  color: #0f172a;
+}
+
 .dashboard-chart-svg {
   width: 100%;
-  min-width: 520px;
+  min-width: 320px;
   height: auto;
   display: block;
 }
@@ -796,6 +810,15 @@ button svg,
   fill: #667085;
   font-size: 10px;
   font-family: Inter, Segoe UI, Arial, sans-serif;
+}
+
+.chart-legend {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+  font-size: 12px;
+  color: #475467;
 }
 
 .chart-value-label {
@@ -841,6 +864,24 @@ button svg,
 .chart-point-trips {
   fill: #f59e0b;
   stroke: #ffffff;
+}
+
+.chart-interactive-point {
+  cursor: pointer;
+}
+
+.chart-hit-area {
+  fill: transparent;
+}
+
+.chart-interactive-point:focus {
+  outline: none;
+}
+
+.chart-interactive-point:hover .chart-point,
+.chart-interactive-point:focus .chart-point {
+  stroke: #111827;
+  stroke-width: 2.5;
 }
 
 .chart-legend {

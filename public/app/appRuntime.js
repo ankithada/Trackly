@@ -5,6 +5,7 @@ import { bindUserManagement } from "./features/userManagement.js";
 import { renderNewEntryForm } from "./features/newEntrySubmissionView.js";
 import { renderUserManagementPanel } from "./features/userManagementView.js";
 import { renderOwnerManagementPanel } from "./features/ownerManagementView.js";
+import { renderHrModule, bindHrModule } from "./features/hrModule.js";
 import { api } from "./shared/api.js";
 import {
   TODAY_ISO,
@@ -50,6 +51,7 @@ async function init() {
   await loadOwnerAdvances();
   await loadNextReceipt();
   if (["admin", "reviewer"].includes(state.user.role)) await loadUsers();
+  if (state.user.role === "admin") await loadHrData();
   renderApp();
   refreshHealthStatus();
 }
@@ -86,6 +88,16 @@ async function loadOwnerAdvances() {
   if (!state.user) return;
   const data = await api("/api/owner-advances");
   state.ownerAdvances = data.ownerAdvances || [];
+}
+
+async function loadHrData() {
+  if (!state.user) return;
+  try {
+    const data = await api("/api/hr/analytics");
+    state.hrData = data;
+  } catch (error) {
+    state.hrData = { analytics: null, error: error.message };
+  }
 }
 
 function renderLogin() {
@@ -204,6 +216,7 @@ function renderApp() {
         loadFleetDetails(),
         loadOwnerAdvances()
       ]).then(renderApp).catch((error) => alert(error.message));
+      else if (state.view === "hr") loadHrData().then(renderApp).catch((error) => alert(error.message));
       else renderApp();
     });
   });
@@ -233,7 +246,8 @@ function navLabel(view) {
     dashboard: "Dashboard",
     entry: "New Entry",
     review: "Review Queue",
-    admin: "Admin"
+    admin: "Admin",
+    hr: "HR"
   }[view];
 }
 
@@ -243,6 +257,9 @@ function pendingCount() {
 
 function renderView() {
   try {
+    if (state.view === "hr") {
+      return renderHrModule({ state });
+    }
     if (state.view === "entry") {
       return renderNewEntryForm({
         entry: {},
@@ -1394,11 +1411,11 @@ function renderBarChart(primaryMap, secondaryMap = null) {
 
 function renderLineChart(series) {
   if (!series.length) return `<div class="empty">No data available yet.</div>`;
-  const chartWidth = 900;
+  const chartWidth = 760;
   const chartHeight = 260;
-  const left = 32;
-  const bottom = 210;
-  const usableWidth = chartWidth - 72;
+  const left = 24;
+  const bottom = 208;
+  const usableWidth = chartWidth - 64;
   const maxTrips = Math.max(1, ...series.map((item) => item.trips));
   const maxRevenue = Math.max(1, ...series.map((item) => item.revenue));
   const tripPoints = series.map((item, index) => {
@@ -1411,34 +1428,38 @@ function renderLineChart(series) {
     const y = bottom - (item.revenue / maxRevenue) * 150;
     return `${x},${y}`;
   }).join(" ");
-  const labels = series.map((item, index) => {
-    const x = left + (index / Math.max(1, series.length - 1)) * usableWidth;
-    return `<text x="${x}" y="232" text-anchor="middle" class="chart-axis-label">${item.label}</text>`;
-  }).join("");
-  const pointLabels = series.map((item, index) => {
+  const labels = series
+    .filter((_, index) => index === 0 || index === series.length - 1 || index % Math.max(1, Math.ceil(series.length / 6)) === 0)
+    .map((item) => {
+      const pointIndex = series.findIndex((entry) => entry.label === item.label);
+      const x = left + (pointIndex / Math.max(1, series.length - 1)) * usableWidth;
+      return `<text x="${x}" y="232" text-anchor="middle" class="chart-axis-label">${item.label}</text>`;
+    })
+    .join("");
+  const pointMarkup = series.map((item, index) => {
     const x = left + (index / Math.max(1, series.length - 1)) * usableWidth;
     const revenueY = bottom - (item.revenue / maxRevenue) * 150;
     const tripsY = bottom - (item.trips / maxTrips) * 150;
     return `
-      <g>
-        <circle cx="${x}" cy="${revenueY}" r="3" class="chart-point chart-point-revenue"></circle>
-        <text x="${x}" y="${Math.max(14, revenueY - 8)}" text-anchor="middle" class="chart-value-label">${formatMoney(item.revenue)}</text>
-        <circle cx="${x}" cy="${tripsY}" r="3" class="chart-point chart-point-trips"></circle>
-        <text x="${x}" y="${Math.max(14, tripsY - 8)}" text-anchor="middle" class="chart-value-label chart-value-label-muted">${item.trips}</text>
+      <g class="chart-interactive-point" tabindex="0" role="button" data-chart-date="${item.label}" data-chart-trips="${item.trips}" data-chart-revenue="${item.revenue}" aria-label="${item.label}: ${item.trips} trips and Rs ${formatMoney(item.revenue)}">
+        <rect x="${x - 10}" y="20" width="20" height="${bottom - 20}" class="chart-hit-area"></rect>
+        <circle cx="${x}" cy="${revenueY}" r="4" class="chart-point chart-point-revenue"></circle>
+        <circle cx="${x}" cy="${tripsY}" r="4" class="chart-point chart-point-trips"></circle>
       </g>
     `;
   }).join("");
-  const gridLines = [0, 1, 2, 3, 4].map((step) => {
-    const y = bottom - (step / 4) * 150;
-    return `<line x1="${left}" y1="${y}" x2="${chartWidth - 28}" y2="${y}" class="chart-grid-line"></line>`;
+  const gridLines = [0, 1, 2, 3, 4].map((stepValue) => {
+    const y = bottom - (stepValue / 4) * 150;
+    return `<line x1="${left}" y1="${y}" x2="${chartWidth - 24}" y2="${y}" class="chart-grid-line"></line>`;
   }).join("");
   return `
     <div class="chart-wrap">
+      <div class="chart-summary" id="dailyChartSelection" aria-live="polite">Showing ${series.length} days • latest <strong>${series[series.length - 1]?.label}</strong> • <strong>${series[series.length - 1]?.trips} trips</strong> • <strong>Rs ${formatMoney(series[series.length - 1]?.revenue || 0)}</strong></div>
       <svg viewBox="0 0 ${chartWidth} ${chartHeight}" class="dashboard-chart-svg" role="img" aria-label="Daily trips and revenue chart">
         ${gridLines}
         <polyline points="${revenuePoints}" class="chart-line chart-line-revenue"></polyline>
         <polyline points="${tripPoints}" class="chart-line chart-line-trips"></polyline>
-        ${pointLabels}
+        ${pointMarkup}
         ${labels}
       </svg>
       <div class="chart-legend"><span><i class="legend-revenue"></i>Revenue (Rs)</span><span><i class="legend-trips"></i>Trips</span></div>
@@ -1921,6 +1942,26 @@ function bindView() {
     renderApp();
   });
 
+  document.querySelectorAll(".chart-interactive-point").forEach((point) => {
+    const showChartValues = () => {
+      const summary = document.querySelector("#dailyChartSelection");
+      if (!summary) return;
+      const date = point.dataset.chartDate || "-";
+      const trips = Number(point.dataset.chartTrips || 0);
+      const revenue = Number(point.dataset.chartRevenue || 0);
+      summary.innerHTML = `<strong>${escapeHtml(date)}</strong> • <strong>${trips} trips</strong> • <strong>Rs ${formatMoney(revenue)}</strong>`;
+    };
+    point.addEventListener("click", showChartValues);
+    point.addEventListener("mouseenter", showChartValues);
+    point.addEventListener("focus", showChartValues);
+    point.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        showChartValues();
+      }
+    });
+  });
+
   document.querySelector("#dashboardOwnerFilterOwner")?.addEventListener("input", (event) => {
     state.dashboardOwnerFilterOwner = String(event.currentTarget.value || "");
     state.dashboardOwnerPage = 1;
@@ -2169,6 +2210,11 @@ function bindView() {
     loadUsers,
     submitButtonFor,
     runWithButton
+  });
+
+  bindHrModule({
+    state,
+    renderApp
   });
 
   document.querySelectorAll("[data-review-date]").forEach((button) => {

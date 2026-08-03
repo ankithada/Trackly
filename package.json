@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
-    "check": "node --check server.js"
+    "check": "node --check server.js && node --check src/app/appServer.js && node --check src/core/env.js && node --check src/core/logging.js"
   },
   "dependencies": {
     "express": "^4.19.2",

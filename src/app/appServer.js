@@ -1,12 +1,33 @@
-const { startServer } = require("./src/app/appServer");
+const crypto = require("crypto");
+const http = require("http");
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
+const { formidable } = require("formidable");
+const { GoogleAuth } = require("google-auth-library");
+const { loadEnvFile } = require("../core/env");
+const { handleRoutes: handleAuthRoutes } = require("../features/auth/routes");
+const { handleRoutes: handleOwnerRoutes } = require("../features/owners/routes");
+const { handleRoutes: handleFleetRoutes } = require("../features/fleet/routes");
+const { handleRoutes: handleEntryRoutes } = require("../features/entries/routes");
+const { handleRoutes: handleUserRoutes } = require("../features/users/routes");
+const { handleRoutes: handleFinanceRoutes } = require("../features/finance/routes");
+const {
+  serializeError,
+  shouldRetryGoogleTokenError,
+  retryAsync,
+  parseJsonSafe,
+  logEvent
+} = require("../core/logging");
 
-<<<<<<< HEAD
-loadEnvFile(path.join(__dirname, ".env"));
+const ROOT_DIR = path.resolve(__dirname, "..", "..");
+
+loadEnvFile(path.join(ROOT_DIR, ".env"));
 
 const PORT = Number(process.env.PORT || 3000);
 //console.log(`Server starting on port ${process.env.PORT}...`);
 const HOST = process.env.HOST || "0.0.0.0";
-const PUBLIC_DIR = path.join(__dirname, "public");
+const PUBLIC_DIR = path.join(ROOT_DIR, "public");
 const SESSION_SECRETS = String(process.env.SESSION_SECRETS || process.env.SESSION_SECRET || "dev-session-secret")
   .split(",")
   .map((value) => value.trim())
@@ -157,107 +178,6 @@ const demoStore = {
   audit: []
 };
 
-function redactForLog(value, key = "") {
-  const normalizedKey = String(key || "").toLowerCase();
-  if (value == null) return value;
-  if (normalizedKey.includes("password")) return "[REDACTED]";
-  if (normalizedKey.includes("privatekey")) return "[REDACTED]";
-  if (normalizedKey === "authorization" || normalizedKey === "cookie") return "[REDACTED]";
-  if (normalizedKey.includes("dataurl")) return "[DATA_URL_REDACTED]";
-  if (Array.isArray(value)) return value.map((item) => redactForLog(item, key));
-  if (typeof value === "object") {
-    return Object.fromEntries(Object.entries(value).map(([childKey, childValue]) => [childKey, redactForLog(childValue, childKey)]));
-  }
-  if (typeof value === "string" && value.length > 2000) return `${value.slice(0, 2000)}...[truncated]`;
-  return value;
-}
-
-function serializeError(error) {
-  return {
-    name: error?.name || "Error",
-    message: error?.message || "Unknown error",
-    code: error?.code || null,
-    status: error?.status ?? error?.response?.status ?? null,
-    statusText: error?.statusText ?? error?.response?.statusText ?? null,
-    response: error?.response ?? null,
-    responseText: String(error?.responseText || ""),
-    stack: error?.stack || ""
-  };
-}
-
-function shouldRetryGoogleTokenError(error) {
-  if (!error) return false;
-  const retryStatusCodes = [401, 429, 500, 502, 503, 504];
-  const message = String(error.message || "").toLowerCase();
-  const responseStatus = error?.response?.status || error?.status;
-  return (
-    retryStatusCodes.includes(responseStatus) ||
-    [
-      "premature close",
-      "invalid response body",
-      "socket hang up",
-      "econnreset",
-      "etimedout",
-      "eai_again",
-      "timeout",
-      "invalid_grant",
-      "unauthenticated",
-      "access_token_expired"
-    ].some((text) => message.includes(text))
-  );
-}
-
-async function retryAsync(fn, options = {}) {
-  const {
-    attempts = 3,
-    initialDelay = 500,
-    factor = 2,
-    shouldRetry = () => false
-  } = options;
-
-  let attempt = 0;
-  let lastError;
-
-  while (attempt < attempts) {
-    try {
-      return await fn();
-    } catch (error) {
-      lastError = error;
-      attempt += 1;
-      if (attempt >= attempts || !shouldRetry(error)) break;
-      const delay = Math.round(initialDelay * Math.pow(factor, attempt - 1));
-      logEvent("warn", "Retrying Google token request", {
-        attempt,
-        delayMs: delay,
-        error: serializeError(error)
-      });
-      await new Promise((resolve) => setTimeout(resolve, delay));
-    }
-  }
-
-  throw lastError;
-}
-
-function parseJsonSafe(value) {
-  if (typeof value !== "string") return value;
-  try {
-    return JSON.parse(value);
-  } catch {
-    return value.length > 2000 ? `${value.slice(0, 2000)}...[truncated]` : value;
-  }
-}
-
-function logEvent(level, message, meta = {}) {
-  const record = {
-    timestamp: new Date().toISOString(),
-    level,
-    message,
-    ...redactForLog(meta)
-  };
-  const consoleMethod = level === "error" ? console.error : level === "warn" ? console.warn : console.log;
-  consoleMethod(JSON.stringify(record));
-}
-
 function seededUser(name, username, password, role) {
   return {
     id: crypto.createHash("sha1").update(username).digest("hex").slice(0, 12),
@@ -294,27 +214,6 @@ function verifyPassword(password, storedValue) {
   return normalized === String(password || "");
 }
 
-function loadEnvFile(filePath) {
-  if (!fs.existsSync(filePath)) return;
-  const lines = fs.readFileSync(filePath, "utf8").split(/\r?\n/);
-  for (const rawLine of lines) {
-    const line = rawLine.trim();
-    if (!line || line.startsWith("#")) continue;
-    const match = line.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
-    if (!match) continue;
-    const [, key, rawValue] = match;
-    if (process.env[key] !== undefined) continue;
-    let value = rawValue.trim();
-    if (
-      (value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'"))
-    ) {
-      value = value.slice(1, -1);
-    }
-    process.env[key] = value;
-  }
-}
-
 function resolveGoogleCredentials() {
   const configuredKey = process.env.GOOGLE_PRIVATE_KEY || "";
   const trimmedKey = configuredKey.trim();
@@ -335,14 +234,14 @@ function resolveGoogleCredentials() {
   const envKeyAsFile = trimmedKey && looksLikeJsonFilePath(trimmedKey)
     ? fs.existsSync(trimmedKey)
       ? trimmedKey
-      : path.join(__dirname, trimmedKey)
+      : path.join(ROOT_DIR, trimmedKey)
     : "";
 
   const envKeyAsJson = trimmedKey && trimmedKey.startsWith("{") && trimmedKey.endsWith("}");
 
   const appCredentialsPath = trimmedApplicationCredentials && path.isAbsolute(trimmedApplicationCredentials)
     ? trimmedApplicationCredentials
-    : trimmedApplicationCredentials ? path.join(__dirname, trimmedApplicationCredentials) : "";
+    : trimmedApplicationCredentials ? path.join(ROOT_DIR, trimmedApplicationCredentials) : "";
 
   if (appCredentialsPath && fs.existsSync(appCredentialsPath)) {
     const parsed = JSON.parse(fs.readFileSync(appCredentialsPath, "utf8"));
@@ -1384,8 +1283,7 @@ async function readEntries() {
   const reviewedByReceipt = new Map(reviewedRows.map((row) => [row.receiptNumber, row]));
   const ownersByName = new Map(owners.map((owner) => [owner.name, owner]));
   return dailyRows.map((row) => {
-    const reviewed = reviewedByReceipt.get(row["Receipt No."] || "");
-    const entry = mapDailyEntry(row, reviewed);
+    const entry = mapDailyEntry(row, reviewedByReceipt.get(row["Receipt No."] || ""));
     const owner = ownersByName.get(entry.ownerName);
     if (owner) {
       entry.ownerPhone = owner.phone;
@@ -1838,19 +1736,14 @@ async function migratePlaintextPasswords(users) {
 
 function mapDailyEntry(row, reviewed = null) {
   const receiptNumber = row["Receipt No."] || "";
-  const baseAmount = row["Mineral Amount"] || row["Total Amount"] || "0";
   const reviewedTransactions = reviewed?.transactions?.length
     ? reviewed.transactions
     : [{
         id: "TX-1",
-        amount: baseAmount,
+        amount: row["Mineral Amount"] || "0",
         mode: row["Payment Mode"] || "Cash",
         notes: ""
       }];
-  const paidTotal = transactionTotal(reviewedTransactions);
-  const effectiveAmountPaid = reviewed?.transactionTotal != null && reviewed.transactionTotal !== ""
-    ? Number(reviewed.transactionTotal || 0)
-    : paidTotal;
   return {
     id: receiptNumber || `EN-${crypto.randomBytes(4).toString("hex").toUpperCase()}`,
     serialNo: row["S. No."] || "",
@@ -1878,8 +1771,8 @@ function mapDailyEntry(row, reviewed = null) {
     destinationName: row["Name of Destination"] || "",
     distanceKm: row["Distance to travel"] || "",
     validityTimeHours: row["Validity Time"] || "",
-    amountPaid: String(effectiveAmountPaid),
-    totalAmountInclGst: String(effectiveAmountPaid),
+    amountPaid: row["Mineral Amount"] || "",
+    totalAmountInclGst: row["Total Amount"] || "",
     paymentMode: row["Payment Mode"] || "Cash",
     paymentStatus: reviewed ? reviewed.status : "Pending Review",
     sandType: "River Sand",
@@ -1893,14 +1786,14 @@ function mapDailyEntry(row, reviewed = null) {
     reviewerNotes: reviewed?.reviewerNotes || "",
     transactions: reviewedTransactions,
     transactionSummary: reviewed?.transactionSummary || transactionSummary(reviewedTransactions),
-    transactionTotal: String(reviewed?.transactionTotal != null && reviewed.transactionTotal !== "" ? Number(reviewed.transactionTotal || 0) : paidTotal),
+    transactionTotal: reviewed?.transactionTotal || String(transactionTotal(reviewedTransactions)),
     driverPhotoUrl: row["Driver Photo"] || "",
     numberPlatePhotoUrl: row["Vehicle Number Plate Photo"] || "",
     sideViewPhotoUrl: row["Side View Photo"] || "",
     frontViewPhotoUrl: row["Front View Photo"] || "",
     driveFileId: "",
     driveFileUrl: "",
-    grossAmount: String(effectiveAmountPaid)
+    grossAmount: row["Mineral Amount"] || ""
   };
 }
 
@@ -2458,606 +2351,87 @@ function analytics(entries) {
 }
 
 async function handleApi(req, res, user, pathname) {
-  if (pathname === "/api/config/status") {
-    return send(res, 200, {
-      googleConnected: google.enabled,
-      demoMode: !google.enabled,
-      site: SITE,
-      deployment: {
-        service: DEPLOYMENT_SERVICE,
-        revision: DEPLOYMENT_REVISION
-      },
-      credentialsSource: google.credentialsSource,
-      runtimeDiagnostics: google.runtimeDiagnostics(),
-      sheetId: google.sheetId || null,
-      driveFolderId: google.driveFolderId || null
-    });
-  }
+  const featureContext = {
+    crypto,
+    hashPassword,
+    seededUser,
+    verifyPassword,
+    readUsers,
+    writeUsers,
+    appendUser,
+    readOwners,
+    writeOwners,
+    readFleetDetails,
+    writeFleetDetails,
+    readReviewedEntries,
+    readConsolidatedEntries,
+    readDebitEntries,
+    readOwnerAdvances,
+    readEntries,
+    reserveReceiptNumber,
+    suggestEntryReceiptNumber,
+    reserveEntryReceiptNumber,
+    appendEntry,
+    writeEntries,
+    upsertReviewedEntry,
+    appendConsolidatedEntry,
+    appendDebitEntry,
+    appendOwnerAdvance,
+    writeOwnerAdvances,
+    parseNonNegativeMoney,
+    ownerNameMatches,
+    ownerCurrentBalanceValue,
+    ensureNoDuplicateReceiptState,
+    ensureReceiptNumberAvailable,
+    allocateFleetId,
+    allocateCreditEntryId,
+    allocateDebitEntryId,
+    allocateOwnerAdvanceId,
+    normalizeCell,
+    normalizeEntry,
+    publicEntry,
+    processEntryPhotos,
+    audit,
+    entryHtml,
+    analytics,
+    transactionSummary,
+    transactionTotal,
+    applyOwnerDetails,
+    applyEntryAdvanceTransition,
+    resolveOwnerAdvanceBaselineBalance,
+    refreshOwnerCurrentBalance,
+    setOwnerCurrentBalance,
+    readSheetObjects,
+    parseJsonOrForm,
+    readJson,
+    send,
+    sendError,
+    requireRole,
+    clearSessionCookieHeader,
+    serializeSessionCookie,
+    makeSession,
+    needsPasswordMigration,
+    migratePlaintextPasswords,
+    google,
+    SITE,
+    DEPLOYMENT_SERVICE,
+    DEPLOYMENT_REVISION,
+    SHEETS,
+    DAILY_ENTRY_COLUMNS,
+    logEvent,
+    serializeError,
+    normalizeSerialNo,
+    isValidSerialNo
+  };
 
-  if (pathname === "/api/config/health") {
-    const health = await google.healthCheck();
-    return send(res, 200, health);
-  }
+  const handled = await handleAuthRoutes(req, res, user, pathname, featureContext)
+    || await handleOwnerRoutes(req, res, user, pathname, featureContext)
+    || await handleFleetRoutes(req, res, user, pathname, featureContext)
+    || await handleEntryRoutes(req, res, user, pathname, featureContext)
+    || await handleUserRoutes(req, res, user, pathname, featureContext)
+    || await handleFinanceRoutes(req, res, user, pathname, featureContext);
 
-  if (pathname === "/api/auth/me") {
-    return send(res, 200, { user });
-  }
-
-  if (pathname === "/api/auth/logout" && req.method === "POST") {
-    return send(res, 200, { ok: true }, { "Set-Cookie": clearSessionCookieHeader() });
-  }
-
-  if (pathname === "/api/auth/login" && req.method === "POST") {
-    const { email, username, password } = await readJson(req);
-    let users = await readUsers();
-    if (google.enabled && users.length === 0) {
-      const defaultUsername = (process.env.ADMIN_EMAIL || "admin").split("@")[0];
-      const admin = seededUser("Admin", defaultUsername, process.env.ADMIN_PASSWORD || "admin123", "admin");
-      await appendUser(admin);
-      users = [admin];
-    }
-    const identifier = String(username || email || "").trim().toLowerCase();
-    const identifierCandidates = Array.from(new Set([
-      identifier,
-      identifier.includes("@") ? identifier.split("@")[0] : ""
-    ].filter(Boolean)));
-    const found = users.find((item) => {
-      const usernameValue = String(item.username || "").trim().toLowerCase();
-      const emailValue = String(item.email || "").trim().toLowerCase();
-      const matchesIdentifier = identifierCandidates.includes(usernameValue) || identifierCandidates.includes(emailValue);
-      return matchesIdentifier && verifyPassword(password, item.password) && item.active !== "false";
-    });
-    if (!found) return sendError(res, 401, "Invalid email or password");
-    if (needsPasswordMigration(users)) {
-      users = await migratePlaintextPasswords(users);
-    }
-    const safeUser = { id: found.id, name: found.name, username: found.username, email: found.email, role: found.role };
-    return send(res, 200, { user: safeUser }, { "Set-Cookie": serializeSessionCookie(makeSession(safeUser), 36000) });
-  }
-
-  if (pathname === "/api/entries/next-receipt" && req.method === "GET") {
-    try {
-      const receiptNumber = await suggestEntryReceiptNumber();
-      return send(res, 200, { receiptNumber });
-    } catch (error) {
-      logEvent("error", "Failed to suggest receipt number", {
-        route: pathname,
-        method: req.method,
-        requestId: req.requestId,
-        actor: user?.email || user?.username || "",
-        error: serializeError(error)
-      });
-      return sendError(res, 500, "Unable to allocate next receipt number. Please retry.");
-    }
-  }
-
-  if (!user) return sendError(res, 401, "Login required");
-
-  if (pathname === "/api/owners" && req.method === "GET") {
-    return send(res, 200, { owners: await readOwners() });
-  }
-
-  if (pathname === "/api/owners" && req.method === "POST") {
-    if (!requireRole(user, ["admin", "reviewer"])) return sendError(res, 403, "Only admins can manage owners");
-    const input = await readJson(req);
-    const owners = await readOwners();
-    const name = String(input.name || "").trim();
-    const phone = String(input.phone || "").trim();
-    const address = String(input.address || "").trim();
-    const currentBalance = input.currentBalance == null || String(input.currentBalance).trim() === ""
-      ? 0
-      : parseNonNegativeMoney(input.currentBalance, "Current Balance");
-    if (!name) return sendError(res, 400, "Owner name is required");
-    const duplicate = owners.find((owner) => owner.name.toLowerCase() === name.toLowerCase());
-    if (duplicate) return sendError(res, 400, "Owner already exists");
-    const owner = { name, phone, address, currentBalance: String(currentBalance.toFixed(2)) };
-    owners.push(owner);
-    await writeOwners(owners);
-    return send(res, 201, { owner });
-  }
-
-  const ownerMatch = pathname.match(/^\/api\/owners\/(.+)$/);
-  if (ownerMatch && req.method === "PATCH") {
-    if (!requireRole(user, ["admin","reviewer"])) return sendError(res, 403, "Only admins can manage owners");
-    const owners = await readOwners();
-    const currentName = decodeURIComponent(ownerMatch[1]);
-    const index = owners.findIndex((owner) => owner.name === currentName);
-    if (index === -1) return sendError(res, 404, "Owner not found");
-    const input = await readJson(req);
-    const nextName = String(input.name || owners[index].name).trim();
-    if (!nextName) return sendError(res, 400, "Owner name is required");
-    const parsedCurrentBalance = input.currentBalance == null || String(input.currentBalance).trim() === ""
-      ? ownerCurrentBalanceValue(owners[index])
-      : parseNonNegativeMoney(input.currentBalance, "Current Balance");
-    const duplicate = owners.find((owner, ownerIndex) => ownerIndex !== index && owner.name.toLowerCase() === nextName.toLowerCase());
-    if (duplicate) return sendError(res, 400, "Another owner already uses this name");
-    owners[index] = {
-      name: nextName,
-      phone: String(input.phone ?? owners[index].phone).trim(),
-      address: String(input.address ?? owners[index].address).trim(),
-      currentBalance: String(parsedCurrentBalance.toFixed(2))
-    };
-    await writeOwners(owners);
-    if (currentName !== nextName) {
-      const fleetDetails = await readFleetDetails();
-      let fleetChanged = false;
-      const nextFleetDetails = fleetDetails.map((fleet) => {
-        if (fleet.ownerName !== currentName) return fleet;
-        fleetChanged = true;
-        return { ...fleet, ownerName: nextName };
-      });
-      if (fleetChanged) await writeFleetDetails(nextFleetDetails);
-
-      const ownerAdvances = await readOwnerAdvances();
-      let ownerAdvancesChanged = false;
-      const nextOwnerAdvances = ownerAdvances.map((entry) => {
-        if (!ownerNameMatches(entry.ownerName, currentName)) return entry;
-        ownerAdvancesChanged = true;
-        return { ...entry, ownerName: nextName };
-      });
-      if (ownerAdvancesChanged) await writeOwnerAdvances(nextOwnerAdvances);
-    }
-    return send(res, 200, { owner: owners[index] });
-  }
-
-  if (pathname === "/api/fleet" && req.method === "GET") {
-    return send(res, 200, { fleetDetails: await readFleetDetails() });
-  }
-
-  if (pathname === "/api/fleet" && req.method === "POST") {
-    if (!requireRole(user, ["admin", "reviewer"])) return sendError(res, 403, "Only admins and reviewers can manage fleet details");
-    const input = await readJson(req);
-    const fleetDetails = await readFleetDetails();
-    const ownerName = String(input.ownerName || "").trim();
-    const vehicleNumber = String(input.vehicleNumber || "").trim().toUpperCase();
-    if (!ownerName) return sendError(res, 400, "Owner name is required");
-    if (!vehicleNumber) return sendError(res, 400, "Vehicle number is required");
-    const duplicate = fleetDetails.find((fleet) => normalizeCell(fleet.vehicleNumber).toUpperCase() === vehicleNumber);
-    if (duplicate) return sendError(res, 400, "Vehicle number already exists in fleet details");
-    const fleet = {
-      fleetId: allocateFleetId(fleetDetails),
-      ownerName,
-      vehicleNumber,
-      vehicleCategory: String(input.vehicleCategory || "").trim(),
-      vehicleType: String(input.vehicleType || "").trim(),
-      status: String(input.status || "Active").trim(),
-      notes: String(input.notes || "").trim()
-    };
-    fleetDetails.push(fleet);
-    await writeFleetDetails(fleetDetails);
-    return send(res, 201, { fleet });
-  }
-
-  const fleetMatch = pathname.match(/^\/api\/fleet\/([^/]+)$/);
-  if (fleetMatch && req.method === "PATCH") {
-    if (!requireRole(user, ["admin", "reviewer"])) return sendError(res, 403, "Only admins and reviewers can manage fleet details");
-    const fleetDetails = await readFleetDetails();
-    const index = fleetDetails.findIndex((fleet) => fleet.fleetId === fleetMatch[1]);
-    if (index === -1) return sendError(res, 404, "Fleet record not found");
-    const input = await readJson(req);
-    const nextVehicleNumber = String(input.vehicleNumber ?? fleetDetails[index].vehicleNumber).trim().toUpperCase();
-    if (!String(input.ownerName ?? fleetDetails[index].ownerName).trim()) return sendError(res, 400, "Owner name is required");
-    if (!nextVehicleNumber) return sendError(res, 400, "Vehicle number is required");
-    const duplicate = fleetDetails.find((fleet, fleetIndex) => fleetIndex !== index && normalizeCell(fleet.vehicleNumber).toUpperCase() === nextVehicleNumber);
-    if (duplicate) return sendError(res, 400, "Another fleet record already uses this vehicle number");
-    fleetDetails[index] = {
-      ...fleetDetails[index],
-      ownerName: String(input.ownerName ?? fleetDetails[index].ownerName).trim(),
-      vehicleNumber: nextVehicleNumber,
-      vehicleCategory: String(input.vehicleCategory ?? fleetDetails[index].vehicleCategory).trim(),
-      vehicleType: String(input.vehicleType ?? fleetDetails[index].vehicleType).trim(),
-      status: String(input.status ?? fleetDetails[index].status).trim(),
-      notes: String(input.notes ?? fleetDetails[index].notes).trim()
-    };
-    await writeFleetDetails(fleetDetails);
-    return send(res, 200, { fleet: fleetDetails[index] });
-  }
-
-  if (pathname === "/api/entries" && req.method === "GET") {
-    const entries = (await readEntries()).map(publicEntry);
-    return send(res, 200, { entries });
-  }
-
-  if (pathname === "/api/entries" && req.method === "POST") {
-    if (!requireRole(user, ["staff", "reviewer", "admin"])) return sendError(res, 403, "Only staff, reviewers, and admins can create entries");
-    const input = await parseJsonOrForm(req);
-    if (!normalizeSerialNo(input.serialNo)) return sendError(res, 400, "S. No. is required");
-    if (!isValidSerialNo(input.serialNo)) return sendError(res, 400, "S. No. must be numeric and up to 3 digits");
-    const entryId = crypto.randomUUID();
-    const receiptNumber = await reserveEntryReceiptNumber(input.receiptNumber || "", entryId, user?.email || user?.username || "");
-    const requestMeta = {
-      requestId: req.requestId,
-      route: pathname,
-      method: req.method,
-      actor: user?.email || user?.username || "",
-      receiptNumber
-    };
-    const entry = await applyOwnerDetails(await processEntryPhotos(
-      normalizeEntry({
-        ...input,
-        receiptNumber,
-        id: entryId
-      }, user),
-      input,
-      requestMeta
-    ));
-    entry.id = entryId;
-    const currentEntries = await readSheetObjects(SHEETS.entries, DAILY_ENTRY_COLUMNS, "entries");
-    if (currentEntries.some((row) => normalizeCell(row["Receipt No."] || "").toUpperCase() === normalizeCell(receiptNumber).toUpperCase())) {
-      throw new Error(`Receipt number ${receiptNumber} already exists; please retry.`);
-    }
-    await applyEntryAdvanceTransition(null, entry);
-    await appendEntry(entry);
-    await audit(entry.id, user, "created");
-    logEvent("info", "Entry created", {
-      ...requestMeta,
-      entryId: entry.id,
-      ownerName: entry.ownerName,
-      vehicleNumber: entry.vehicleNumber
-    });
-    const nextReceiptNumber = await suggestEntryReceiptNumber();
-    return send(res, 201, { entry: publicEntry(entry), nextReceiptNumber });
-  }
-
-  const driveImageMatch = pathname.match(/^\/api\/drive-image\/([^/]+)$/);
-  if (driveImageMatch && req.method === "GET") {
-    if (!google.enabled) return sendError(res, 404, "Drive image not available");
-    const file = await google.downloadDriveFile(driveImageMatch[1]);
-    res.writeHead(200, {
-      "Cache-Control": "no-store, max-age=0",
-      Pragma: "no-cache",
-      Expires: "0",
-      "Content-Type": file.contentType
-    });
-    res.end(file.buffer);
-    return;
-  }
-
-  if (pathname === "/api/debit-entries" && req.method === "GET") {
-    return send(res, 200, { debitEntries: await readDebitEntries() });
-  }
-
-  if (pathname === "/api/consolidated-entries" && req.method === "GET") {
-    return send(res, 200, { consolidatedEntries: await readConsolidatedEntries() });
-  }
-
-  if (pathname === "/api/owner-advances" && req.method === "GET") {
-    return send(res, 200, { ownerAdvances: await readOwnerAdvances() });
-  }
-
-  if (pathname === "/api/debit-entries" && req.method === "POST") {
-    if (!requireRole(user, ["reviewer", "admin"])) return sendError(res, 403, "Only reviewers can create debit entries");
-    const input = await readJson(req);
-    const debitEntries = await readDebitEntries();
-    const createdDate = new Date().toISOString().slice(0, 10);
-    const debitEntry = {
-      debitEntryId: allocateDebitEntryId(debitEntries),
-      date: String(input.date || new Date().toISOString().slice(0, 10)),
-      description: String(input.description || "").trim(),
-      amount: String(Number(input.amount || 0)),
-      category: String(input.category || "Miscellaneous").trim(),
-      paymentMode: String(input.paymentMode || "Cash").trim(),
-      paidTo: String(input.paidTo || "").trim(),
-      notes: String(input.notes || "").trim(),
-      createdBy: user.name || user.username || user.email,
-      createdDate
-    };
-    if (!debitEntry.description) return sendError(res, 400, "Description is required");
-    if (!Number.isFinite(Number(debitEntry.amount)) || Number(debitEntry.amount) <= 0) {
-      return sendError(res, 400, "Amount must be greater than 0");
-    }
-    await appendDebitEntry(debitEntry);
-    return send(res, 201, { debitEntry });
-  }
-
-  if (pathname === "/api/consolidated-entries" && req.method === "POST") {
-    if (!requireRole(user, ["reviewer", "admin"])) return sendError(res, 403, "Only reviewers can create consolidated credits");
-    const input = await readJson(req);
-    const entries = await readEntries();
-    const consolidatedEntries = await readConsolidatedEntries();
-    const entryIds = Array.isArray(input.entryIds) ? input.entryIds.map((value) => String(value)) : [];
-    const selectedEntries = entries.filter((entry) => entryIds.includes(entry.id));
-    if (!selectedEntries.length) return sendError(res, 400, "Select at least one entry");
-
-    const creditEntryId = allocateCreditEntryId(consolidatedEntries);
-    const formEntry = selectedEntries.map((entry) => entry.receiptNumber || entry.id).join(", ");
-    const createdDate = new Date().toISOString().slice(0, 10);
-    const entryMetadata = selectedEntries.map((entry) => ({
-      receiptNo: entry.receiptNumber || entry.id,
-      totalAmount: Number(entry.totalAmountInclGst || entry.grossAmount || 0),
-      paymentMode: entry.paymentMode || "",
-      vehicleCategory: entry.vehicleCategory || "",
-      ownerName: entry.ownerName || ""
-    }));
-    const consolidatedEntry = {
-      creditEntryId,
-      formEntry,
-      totalAmount: String(Number(input.totalAmount || 0)),
-      receivedBy: String(input.receivedBy || "").trim(),
-      paymentMode: String(input.paymentMode || "Cash").trim(),
-      notes: String(input.notes || "").trim(),
-      date: new Date().toISOString().slice(0, 10),
-      entryMetadata,
-      createdBy: user.name || user.username || user.email,
-      createdDate
-    };
-    if (!consolidatedEntry.receivedBy) return sendError(res, 400, "Received By is required");
-    if (!Number.isFinite(Number(consolidatedEntry.totalAmount)) || Number(consolidatedEntry.totalAmount) <= 0) {
-      return sendError(res, 400, "Total Amount must be greater than 0");
-    }
-
-    await appendConsolidatedEntry(consolidatedEntry);
-    return send(res, 201, { consolidatedEntry });
-  }
-
-  if (pathname === "/api/owner-advances" && req.method === "POST") {
-    if (!requireRole(user, ["reviewer", "admin"])) return sendError(res, 403, "Only reviewers and admins can create owner advances");
-    const input = await readJson(req);
-    const ownerName = String(input.ownerName || "").trim();
-    const amount = Number(input.amount || 0);
-    const paymentMode = String(input.paymentMode || "Cash").trim();
-    const notes = String(input.notes || "").trim();
-    const date = String(input.date || new Date().toISOString().slice(0, 10)).trim();
-    const hasCurrentBalanceInput = input.currentBalance != null && String(input.currentBalance).trim() !== "";
-    const currentBalanceInput = hasCurrentBalanceInput
-      ? parseNonNegativeMoney(input.currentBalance, "Current Balance")
-      : null;
-
-    if (!ownerName) return sendError(res, 400, "Owner name is required");
-    if (!Number.isFinite(amount) || amount <= 0) return sendError(res, 400, "Amount must be greater than 0");
-
-    const owners = await readOwners();
-    const ownerIndex = owners.findIndex((owner) => ownerNameMatches(owner.name, ownerName));
-    if (ownerIndex === -1) return sendError(res, 400, "Owner not found in Owner Master");
-
-    const existingBalance = await resolveOwnerAdvanceBaselineBalance(ownerName, owners[ownerIndex]);
-    const nextBalance = hasCurrentBalanceInput
-      ? currentBalanceInput
-      : Number((existingBalance + amount).toFixed(2));
-    owners[ownerIndex] = {
-      ...owners[ownerIndex],
-      currentBalance: String(nextBalance.toFixed(2))
-    };
-    await writeOwners(owners);
-
-    const ownerAdvances = await readOwnerAdvances();
-    const ownerAdvance = {
-      ownerAdvanceId: allocateOwnerAdvanceId(ownerAdvances),
-      date,
-      ownerName,
-      amount: String(amount),
-      paymentMode,
-      currentBalance: String(nextBalance.toFixed(2)),
-      notes,
-      createdBy: user.name || user.username || user.email,
-      createdDate: new Date().toISOString().slice(0, 10)
-    };
-
-    await appendOwnerAdvance(ownerAdvance);
-    const refreshedOwner = await refreshOwnerCurrentBalance(ownerName);
-    ownerAdvance.currentBalance = refreshedOwner.currentBalance || ownerAdvance.currentBalance;
-    return send(res, 201, { ownerAdvance });
-  }
-
-  const ownerAdvanceMatch = pathname.match(/^\/api\/owner-advances\/([^/]+)$/);
-  if (ownerAdvanceMatch && req.method === "PATCH") {
-    if (!requireRole(user, ["reviewer", "admin"])) return sendError(res, 403, "Only reviewers and admins can edit owner advances");
-    const ownerAdvanceId = decodeURIComponent(ownerAdvanceMatch[1]);
-    const input = await readJson(req);
-    const ownerName = String(input.ownerName || "").trim();
-    const amount = Number(input.amount || 0);
-    const paymentMode = String(input.paymentMode || "Cash").trim();
-    const notes = String(input.notes || "").trim();
-    const date = String(input.date || new Date().toISOString().slice(0, 10)).trim();
-    const hasCurrentBalanceInput = input.currentBalance != null && String(input.currentBalance).trim() !== "";
-    const currentBalanceInput = hasCurrentBalanceInput
-      ? parseNonNegativeMoney(input.currentBalance, "Current Balance")
-      : null;
-
-    if (!ownerName) return sendError(res, 400, "Owner name is required");
-    if (!Number.isFinite(amount) || amount <= 0) return sendError(res, 400, "Amount must be greater than 0");
-
-    const ownerAdvances = await readOwnerAdvances();
-    const index = ownerAdvances.findIndex((entry) => entry.ownerAdvanceId === ownerAdvanceId);
-    if (index === -1) return sendError(res, 404, "Owner advance not found");
-
-    const previousOwnerName = String(ownerAdvances[index].ownerName || "").trim();
-
-    let nextBalance = ownerAdvances[index].currentBalance || "";
-    if (hasCurrentBalanceInput) {
-      const ownerRecord = await setOwnerCurrentBalance(ownerName, currentBalanceInput);
-      nextBalance = ownerRecord.currentBalance || String(currentBalanceInput.toFixed(2));
-    }
-
-    const updated = {
-      ...ownerAdvances[index],
-      ownerName,
-      amount: String(amount),
-      paymentMode,
-      notes,
-      date,
-      currentBalance: nextBalance
-    };
-    ownerAdvances[index] = updated;
-    await writeOwnerAdvances(ownerAdvances);
-    const ownerNamesToRefresh = Array.from(new Set([
-      previousOwnerName,
-      ownerName
-    ].filter(Boolean)));
-    for (const targetOwnerName of ownerNamesToRefresh) {
-      const refreshedOwner = await refreshOwnerCurrentBalance(targetOwnerName);
-      if (ownerNameMatches(targetOwnerName, ownerName)) {
-        updated.currentBalance = refreshedOwner.currentBalance || updated.currentBalance;
-      }
-    }
-    return send(res, 200, { ownerAdvance: updated });
-  }
-
-  const entryMatch = pathname.match(/^\/api\/entries\/([^/]+)(?:\/(review|download))?$/);
-  if (entryMatch) {
-    const [, entryId, action] = entryMatch;
-    const entries = await readEntries();
-    const requestedEntryId = String(entryId || "").trim().toUpperCase();
-    const index = entries.findIndex((entry) => {
-      const normalizedId = String(entry.id || "").trim().toUpperCase();
-      const normalizedReceipt = String(entry.receiptNumber || "").trim().toUpperCase();
-      return normalizedId === requestedEntryId || normalizedReceipt === requestedEntryId;
-    });
-    if (index === -1) return sendError(res, 404, "Entry not found");
-
-    if (action === "download" && req.method === "GET") {
-      return send(res, 200, await entryHtml(entries[index]), {
-        "Content-Disposition": `inline; filename="${entries[index].id}.html"`
-      });
-    }
-
-    if (action === "review" && req.method === "POST") {
-      if (!requireRole(user, ["reviewer", "admin"])) return sendError(res, 403, "Only reviewers can approve entries");
-      const input = await readJson(req);
-      ensureNoDuplicateReceiptState(entries, entries[index].id);
-      const updated = await applyOwnerDetails(normalizeEntry({ ...input, status: input.status || "Approved" }, user, entries[index]));
-      updated.reviewedBy = user.email;
-      updated.reviewedAt = new Date().toISOString();
-      updated.status = input.status || "Approved";
-      const html = await entryHtml(updated);
-      if (google.enabled) {
-        const file = await google.uploadHtml(`${updated.id}.html`, html);
-        updated.driveFileId = file.id || "";
-        updated.driveFileUrl = file.webViewLink || "";
-      }
-      await applyEntryAdvanceTransition(entries[index], updated);
-      const reviewedTransactions = Array.isArray(updated.transactions) ? updated.transactions : [];
-      const reviewedEntry = {
-        ...updated,
-        amountPaid: String(updated.transactionTotal || updated.amountPaid || 0),
-        totalAmountInclGst: String(updated.transactionTotal || updated.totalAmountInclGst || 0),
-        grossAmount: String(updated.transactionTotal || updated.grossAmount || 0),
-        paymentMode: reviewedTransactions.length === 1 ? reviewedTransactions[0].mode : "Multiple",
-        transactionSummary: updated.transactionSummary || transactionSummary(reviewedTransactions),
-        transactionTotal: String(updated.transactionTotal || transactionTotal(reviewedTransactions)),
-        transactionCount: String(reviewedTransactions.length),
-        transactions: reviewedTransactions,
-        reviewerNotes: String(updated.reviewerNotes || "")
-      };
-      entries[index] = {
-        ...updated,
-        amountPaid: String(entries[index].amountPaid || updated.amountPaid || 0),
-        totalAmountInclGst: String(entries[index].totalAmountInclGst || updated.totalAmountInclGst || 0),
-        grossAmount: String(entries[index].grossAmount || updated.grossAmount || 0),
-        paymentMode: entries[index].paymentMode || updated.paymentMode || "Cash"
-      };
-      await writeEntries(entries);
-      const reviewedSummary = updated.transactionSummary || transactionSummary(reviewedTransactions);
-      const reviewedTotal = updated.transactionTotal || String(transactionTotal(reviewedTransactions));
-      const reviewedNotes = String(updated.reviewerNotes || "");
-      await upsertReviewedEntry({
-        receiptNumber: reviewedEntry.receiptNumber,
-        reviewedAt: reviewedEntry.reviewedAt,
-        status: reviewedEntry.status,
-        reviewedBy: reviewedEntry.reviewedBy,
-        totalAmountInclGst: String(reviewedEntry.totalAmountInclGst || 0),
-        transactionTotal: String(reviewedTotal),
-        transactionCount: String(reviewedTransactions.length),
-        transactions: reviewedTransactions,
-        transactionSummary: reviewedSummary,
-        reviewerNotes: reviewedNotes
-      });
-
-      await audit(updated.id, user, `reviewed:${updated.status}`, reviewedNotes);
-
-      return send(res, 200, { entry: publicEntry(updated) });
-    }
-
-    if (req.method === "PATCH") {
-      if (!requireRole(user, ["reviewer", "admin"])) return sendError(res, 403, "Only reviewers can edit entries");
-      const input = await parseJsonOrForm(req);
-      if (!normalizeSerialNo(input.serialNo ?? entries[index].serialNo)) return sendError(res, 400, "S. No. is required");
-      if (!isValidSerialNo(input.serialNo ?? entries[index].serialNo)) return sendError(res, 400, "S. No. must be numeric and up to 3 digits");
-      ensureNoDuplicateReceiptState(entries, entries[index].id);
-      const nextReceiptNumber = input.receiptNumber
-        ? ensureReceiptNumberAvailable(entries, input.receiptNumber, entries[index].id)
-        : entries[index].receiptNumber;
-      const updated = await applyOwnerDetails(await processEntryPhotos(
-        normalizeEntry({ ...input, receiptNumber: nextReceiptNumber }, user, entries[index]),
-        input
-      ));
-      await applyEntryAdvanceTransition(entries[index], updated);
-      entries[index] = updated;
-      await writeEntries(entries);
-      await audit(updated.id, user, "edited");
-      return send(res, 200, { entry: publicEntry(updated) });
-    }
-  }
-
-  if (pathname === "/api/analytics" && req.method === "GET") {
-    if (!requireRole(user, ["analyst", "admin"])) return sendError(res, 403, "Only analysts can view analytics");
-    return send(res, 200, analytics(await readEntries()));
-  }
-
-  if (pathname === "/api/users" && req.method === "GET") {
-    if (!requireRole(user, ["admin", "reviewer"])) return sendError(res, 403, "Only admins and reviewers can manage users");
-    const users = (await readUsers()).map(({ password, ...item }) => item);
-    return send(res, 200, { users });
-  }
-
-  if (pathname === "/api/users" && req.method === "POST") {
-    if (!requireRole(user, ["admin", "reviewer"])) return sendError(res, 403, "Only admins and reviewers can manage users");
-    const input = await readJson(req);
-    const username = String(input.username || input.email || "").trim();
-    const fullName = String(input.name || input.fullName || username).trim();
-    const rawPassword = input.password || crypto.randomBytes(6).toString("hex");
-    const newUser = {
-      id: crypto.createHash("sha1").update(username).digest("hex").slice(0, 12),
-      name: fullName,
-      username,
-      email: username,
-      password: hashPassword(rawPassword),
-      role: input.role || "staff",
-      active: String(input.active || "true"),
-      createdAt: new Date().toISOString()
-    };
-    await appendUser(newUser);
-    return send(res, 201, { user: { ...newUser, password: undefined }, temporaryPassword: rawPassword });
-  }
-
-  const userMatch = pathname.match(/^\/api\/users\/([^/]+)$/);
-  if (userMatch && req.method === "PATCH") {
-    if (!requireRole(user, ["admin", "reviewer"])) return sendError(res, 403, "Only admins and reviewers can manage users");
-    const users = await readUsers();
-    const index = users.findIndex((item) => item.id === userMatch[1]);
-    if (index === -1) return sendError(res, 404, "User not found");
-    const input = await readJson(req);
-    users[index] = {
-      ...users[index],
-      name: input.name ?? users[index].name,
-      username: input.username ?? users[index].username,
-      email: input.username ?? users[index].email,
-      role: input.role ?? users[index].role,
-      active: input.active ?? users[index].active
-    };
-    await writeUsers(users);
-    const { password: _password, ...safeUser } = users[index];
-    return send(res, 200, { user: safeUser });
-  }
-
-  const userResetMatch = pathname.match(/^\/api\/users\/([^/]+)\/reset-password$/);
-  if (userResetMatch && req.method === "POST") {
-    if (!requireRole(user, ["admin", "reviewer"])) return sendError(res, 403, "Only admins and reviewers can manage users");
-    const users = await readUsers();
-    const index = users.findIndex((item) => item.id === userResetMatch[1]);
-    if (index === -1) return sendError(res, 404, "User not found");
-    const input = await readJson(req);
-    const rawPassword = String(input.password || crypto.randomBytes(6).toString("hex"));
-    if (!rawPassword.trim()) return sendError(res, 400, "Password is required");
-    users[index] = {
-      ...users[index],
-      password: hashPassword(rawPassword)
-    };
-    await writeUsers(users);
-    const { password: _password, ...safeUser } = users[index];
-    return send(res, 200, { user: safeUser, temporaryPassword: rawPassword });
-  }
-
+  if (handled) return;
   return sendError(res, 404, "API route not found");
 }
 
@@ -3118,18 +2492,23 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, HOST, () => {
-  logEvent("info", "Trackly server started", {
-    host: HOST,
-    port: PORT,
-    service: DEPLOYMENT_SERVICE,
-    revision: DEPLOYMENT_REVISION,
-    publicBaseUrl: PUBLIC_BASE_URL,
-    googleMode: google.enabled ? "enabled" : "demo",
-    credentialsSource: google.credentialsSource,
-    credentialFile: google.credentialsFile || null
+function startServer() {
+  server.listen(PORT, HOST, () => {
+    logEvent("info", "Trackly server started", {
+      host: HOST,
+      port: PORT,
+      service: DEPLOYMENT_SERVICE,
+      revision: DEPLOYMENT_REVISION,
+      publicBaseUrl: PUBLIC_BASE_URL,
+      googleMode: google.enabled ? "enabled" : "demo",
+      credentialsSource: google.credentialsSource,
+      credentialFile: google.credentialsFile || null
+    });
   });
-});
-=======
-startServer();
->>>>>>> origin/main
+  return server;
+}
+
+module.exports = {
+  startServer,
+  server
+};

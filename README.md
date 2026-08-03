@@ -17,6 +17,12 @@ npm start
 
 Open `http://localhost:3000`.
 
+## Project Structure
+
+- `public/` contains all UI code and static assets only.
+- `src/` contains backend/runtime code, API handlers, and supporting services.
+- `server.js` is a thin bootstrap entrypoint that starts the backend runtime from `src/app/appServer.js`.
+
 Without Google credentials, the app runs in demo memory mode with these accounts:
 
 - `staff@trackly.local` / `staff123`

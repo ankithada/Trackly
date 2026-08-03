@@ -1,343 +1,35 @@
-import { startApp } from "./app/appRuntime.js";
-
-<<<<<<< HEAD
-const state = {
-  user: null,
-  config: null,
-  entries: [],
-  owners: [],
-  fleetDetails: [],
-  nextReceiptNumber: "",
-  users: [],
-  debitEntries: [],
-  consolidatedEntries: [],
-  ownerAdvances: [],
-  view: "entry",
-  selectedEntry: null,
-  selectedReviewIds: [],
-  consolidatedCreditDraft: null,
-  debitDraft: null,
-  ownerDraft: null,
-  fleetDraft: null,
-  ownerAdvanceDraft: null,
-  adminTab: "users",
-  ownerSearch: "",
-  ownerAdvanceFilterOwner: "",
-  ownerAdvanceFilterFrom: "",
-  ownerAdvanceFilterTo: "",
-  ownerAdvancePage: 1,
-  activeOwnerName: "",
-  dashboardMonth: "all",
-  dashboardDateFrom: DASHBOARD_DEFAULT_FROM_ISO,
-  dashboardDateTo: TODAY_ISO,
-  dashboardOwnerFilterOwner: "",
-  dashboardOwnerFilterCategory: "all",
-  dashboardOwnerFilterTransactions: "all",
-  dashboardOwnerFilterRevenue: "all",
-  dashboardOwnerPage: 1,
-  reviewSidebarOpen: true,
-  reviewOwnerFilter: "",
-  reviewPaymentFilter: "",
-  reviewVehicleCategoryFilter: "",
-  reviewPage: 1,
-  reviewPageSize: 10,
-  reviewDate: TODAY_ISO,
-  reviewFilter: "Unreviewed"
-};
-
-const REVIEW_PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
-
-const PHOTO_UPLOAD_CONFIG = {
-  maxFileBytes: 15 * 1024 * 1024,
-  maxCompressedBytes: 3 * 1024 * 1024,
-  maxPayloadBytes: 22 * 1024 * 1024,
-  maxImageDimension: 1200,
-  minCompressQuality: 0.35,
-  qualityStep: 0.1
-};
-
-const roleViews = {
-  staff: ["entry"],
-  reviewer: ["entry","review", "admin"],
-  analyst: ["dashboard"],
-  admin: ["dashboard", "entry", "review", "admin"]
-};
-
-const titles = {
-  dashboard: "Revenue Dashboard",
-  entry: "Daily Loading Entry",
-  review: "Reviewer Queue",
-  admin: "User Administration"
-};
-
-const contractBrandLines = [
-  "Marketing, Sieving & Transportation Contract",
-  "of S&G Pvt. Ltd.",
-  "GSTN: 08AANCA9021D1ZS"
-];
+import { bindNewEntrySubmission } from "./features/newEntrySubmission.js";
+import { bindVerifyEntry } from "./features/verifyEntry.js";
+import { bindOwnerManagement } from "./features/ownerManagement.js";
+import { bindUserManagement } from "./features/userManagement.js";
+import { renderNewEntryForm } from "./features/newEntrySubmissionView.js";
+import { renderUserManagementPanel } from "./features/userManagementView.js";
+import { renderOwnerManagementPanel } from "./features/ownerManagementView.js";
+import { api } from "./shared/api.js";
+import {
+  TODAY_ISO,
+  DASHBOARD_DEFAULT_FROM_ISO,
+  state,
+  roleViews,
+  titles,
+  contractBrandLines,
+  REVIEW_PAGE_SIZE_OPTIONS,
+  PHOTO_UPLOAD_CONFIG
+} from "./shared/state.js";
+import {
+  escapeHtml,
+  setButtonBusy,
+  runWithButton,
+  setGlobalBusyOverlay,
+  setGlobalButtonLock,
+  submitButtonFor,
+  enhanceUi,
+  applyTailwindTheme,
+  decorateButtonsWithIcons,
+  addIconToButton
+} from "./shared/uiHelpers.js";
 
 const app = document.querySelector("#app");
-
-const selectorClassMap = [
-  ["body", "bg-slate-50 text-slate-900 antialiased"],
-  ["#app", "min-h-screen"],
-  [".login-shell", "min-h-screen grid lg:grid-cols-[minmax(320px,460px)_1fr] bg-trackly-900"],
-  [".login-art", "p-8 md:p-12 text-white flex flex-col justify-between gap-10"],
-  [".login-panel", "grid place-items-center p-6 md:p-8 bg-slate-50"],
-  [".panel", "w-full max-w-[460px] rounded-lg border border-slate-200 bg-white p-6 shadow-soft"],
-  [".app-shell", "min-h-screen grid lg:grid-cols-[minmax(220px,260px)_minmax(0,1fr)] overflow-x-hidden"],
-  [".sidebar", "bg-trackly-900 text-white p-5 md:p-6 flex flex-col gap-5"],
-  [".nav", "grid gap-2"],
-  [".user-chip", "mt-auto border-t border-white/15 pt-5 text-slate-200"],
-  [".content", "min-w-0"],
-  [".topbar", "min-h-[74px] border-b border-slate-200 bg-white px-4 py-4 md:px-7 flex items-center justify-between gap-4"],
-  [".title-block", "grid gap-1"],
-  [".site-title", "text-lg font-black text-trackly-700"],
-  [".site-detail", "text-sm font-semibold text-slate-500"],
-  [".workspace", "px-4 pb-10 pt-6 md:px-7 overflow-x-hidden"],
-  [".card", "rounded-lg border border-slate-200 bg-white p-4 md:p-[18px] shadow-sm"],
-  [".field", "grid gap-1.5"],
-  ["label", "text-[13px] font-semibold text-slate-700"],
-  ["input, select, textarea", "w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 shadow-sm outline-none transition focus:border-trackly-500 focus:ring-2 focus:ring-trackly-100"],
-  [".actions", "flex flex-wrap items-center gap-3"],
-  [".badge", "inline-flex min-h-7 items-center rounded-full px-2.5 py-1 text-xs font-extrabold"],
-  [".table-wrap", "overflow-auto rounded-lg border border-slate-200 bg-white"],
-  ["table", "w-full min-w-[900px] border-collapse"],
-  ["th", "bg-slate-100 text-[11px] font-bold uppercase tracking-[0.04em] text-slate-700"],
-  ["th, td", "border-b border-slate-200 px-3 py-3 text-left align-top"],
-  [".form-section", "grid gap-4 rounded-lg border border-slate-200 bg-white p-4 md:p-[18px]"],
-  [".receipt-strip", "flex min-h-[52px] items-center justify-between gap-4 rounded-lg border border-slate-300 bg-slate-200 px-4 py-3"],
-  [".choice-group", "flex flex-wrap gap-2.5 border-b border-slate-200 pb-2.5"],
-  [".upload-tile", "grid min-h-[132px] cursor-pointer place-items-center content-center gap-1.5 rounded-lg border border-dashed border-slate-300 bg-slate-50 p-3.5 text-center"],
-  [".review-dialog-backdrop", "fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4"],
-  [".review-dialog-shell", "w-full max-w-5xl rounded-lg border border-slate-200 bg-white shadow-soft"],
-  [".review-detail-card", "rounded-lg border border-slate-200 bg-white"],
-  [".review-entry-card, .review-stream-card, .review-sidebar-pane > *, .review-content-pane > *", "rounded-lg border border-slate-200 bg-white shadow-sm"],
-  [".photo-card img", "h-48 w-full rounded-md object-cover"],
-  [".empty", "rounded-lg border border-dashed border-slate-300 bg-slate-50 px-6 py-10 text-center text-slate-500"]
-];
-
-const buttonSelectorIcons = [
-  ["#logoutBtn", "log-out"],
-  ["#refreshBtn", "refresh-cw"],
-  ['[data-view="dashboard"]', "layout-dashboard"],
-  ['[data-view="entry"]', "plus"],
-  ['[data-view="review"]', "list"],
-  ['[data-view="admin"]', "users"],
-  ["#openDebitDialog", "minus-circle"],
-  ["#createConsolidatedCredit", "layers"],
-  ["#clearSelectedReviews", "x"],
-  ["#downloadDraft", "download"],
-  ["#addTransactionBtn", "plus"],
-  ["#loginForm button[type='submit']", "log-in"],
-  ["#entryForm button[type='submit']", "send"],
-  ["#userForm button[type='submit']", "user-plus"],
-  ["#ownerForm button[type='submit']", "building-2"],
-  ["#fleetForm button[type='submit']", "truck"],
-  ["#debitEntryForm button[type='submit']", "wallet"],
-  ["#consolidatedCreditForm button[type='submit']", "receipt"],
-  ["#cancelOwnerEdit", "x"],
-  ["#cancelFleetEdit", "x"]
-];
-
-async function api(path, options = {}) {
-  const startedAt = Date.now();
-  const isFormData = options.body instanceof FormData;
-  const response = await fetch(path, {
-    ...options,
-    credentials: "include",
-    headers: isFormData ? (options.headers || {}) : {
-      "Content-Type": "application/json",
-      ...(options.headers || {})
-    }
-  });
-  const contentType = response.headers.get("content-type") || "";
-  const data = contentType.includes("application/json") ? await response.json() : await response.text();
-  logApiResponse(path, options, response, data, Date.now() - startedAt);
-  if (!response.ok) {
-    const message = typeof data === "object" ? data.error || response.statusText : String(data || response.statusText || "Request failed");
-    throw new Error(message);
-  }
-  return data;
-}
-
-function sanitizeLogValue(value, key = "") {
-  const normalizedKey = String(key || "").toLowerCase();
-  if (value == null) return value;
-  if (normalizedKey.includes("password")) return "[REDACTED]";
-  if (normalizedKey.includes("dataurl")) return "[DATA_URL_REDACTED]";
-  if (Array.isArray(value)) return value.map((item) => sanitizeLogValue(item, key));
-  if (typeof value === "object") {
-    return Object.fromEntries(Object.entries(value).map(([childKey, childValue]) => [childKey, sanitizeLogValue(childValue, childKey)]));
-  }
-  if (typeof value === "string" && value.length > 1000) return `${value.slice(0, 1000)}...[truncated]`;
-  return value;
-}
-
-function safeParseRequestBody(body) {
-  if (!body || typeof body !== "string") return body;
-  try {
-    return JSON.parse(body);
-  } catch {
-    return body.length > 1000 ? `${body.slice(0, 1000)}...[truncated]` : body;
-  }
-}
-
-function logApiResponse(path, options, response, data, durationMs) {
-  const method = options.method || "GET";
-  const payload = {
-    type: "api-response",
-    timestamp: new Date().toISOString(),
-    method,
-    path,
-    status: response.status,
-    ok: response.ok,
-    durationMs,
-    requestBody: sanitizeLogValue(safeParseRequestBody(options.body)),
-    responseBody: sanitizeLogValue(data)
-  };
-  const logger = response.ok ? console.log : console.error;
-  logger(JSON.stringify(payload));
-}
-
-function setButtonBusy(button, busy, busyLabel = "Please wait...") {
-  if (!button) return;
-  if (!button.dataset.defaultLabel) button.dataset.defaultLabel = button.textContent.trim();
-  button.disabled = busy;
-  button.textContent = busy ? busyLabel : button.dataset.defaultLabel;
-}
-
-async function runWithButton(button, busyLabel, work) {
-  if (button?.disabled) return;
-  setButtonBusy(button, true, busyLabel);
-  try {
-    return await work();
-  } finally {
-    setButtonBusy(button, false);
-  }
-}
-
-function setGlobalBusyOverlay(visible, message = "Processing review...") {
-  const existing = document.querySelector("#globalBusyOverlay");
-  if (!visible) {
-    existing?.remove();
-    return;
-  }
-
-  const safeMessage = String(message || "Processing review...");
-  if (existing) {
-    const textNode = existing.querySelector("[data-busy-message]");
-    if (textNode) textNode.textContent = safeMessage;
-    return;
-  }
-
-  const overlay = document.createElement("div");
-  overlay.id = "globalBusyOverlay";
-  overlay.className = "global-busy-overlay";
-  overlay.innerHTML = `
-    <div class="global-busy-card" role="status" aria-live="polite" aria-busy="true">
-      <div class="global-busy-spinner" aria-hidden="true"></div>
-      <div class="global-busy-text" data-busy-message>${escapeHtml(safeMessage)}</div>
-    </div>
-  `;
-  document.body.appendChild(overlay);
-}
-
-function setGlobalButtonLock(locked, triggerButton = null, triggerBusyLabel = "Processing...") {
-  const buttons = Array.from(document.querySelectorAll("button"));
-  buttons.forEach((button) => {
-    if (locked) {
-      button.dataset.lockPrevDisabled = button.disabled ? "1" : "0";
-      if (button === triggerButton) {
-        button.dataset.lockPrevLabel = button.textContent;
-        button.textContent = triggerBusyLabel;
-      }
-      button.disabled = true;
-      return;
-    }
-
-    if (button.dataset.lockPrevDisabled === "1") {
-      button.disabled = true;
-    } else if (button.dataset.lockPrevDisabled === "0") {
-      button.disabled = false;
-    }
-
-    if (button === triggerButton && button.dataset.lockPrevLabel != null) {
-      button.textContent = button.dataset.lockPrevLabel;
-      delete button.dataset.lockPrevLabel;
-    }
-
-    delete button.dataset.lockPrevDisabled;
-  });
-
-  document.body.classList.toggle("busy", locked);
-  setGlobalBusyOverlay(locked, triggerBusyLabel);
-}
-
-function submitButtonFor(form, event) {
-  return event.submitter || form.querySelector("button[type='submit']");
-}
-
-function enhanceUi() {
-  return;
-}
-
-function applyTailwindTheme() {
-  selectorClassMap.forEach(([selector, classNames]) => {
-    document.querySelectorAll(selector).forEach((node) => node.classList.add(...classNames.split(" ")));
-  });
-
-  document.querySelectorAll("button").forEach((button) => {
-    const isDanger = button.classList.contains("danger") || /reject|disable/i.test(button.textContent || "");
-    const isSecondary = button.classList.contains("secondary") || button.classList.contains("link-action") || button.classList.contains("ghost-action");
-    button.classList.add("inline-flex", "items-center", "justify-center", "gap-2", "rounded-md", "border", "px-3.5", "py-2.5", "text-sm", "font-semibold", "transition", "focus:outline-none", "focus:ring-2", "focus:ring-trackly-100");
-    if (isDanger) {
-      button.classList.add("border-rose-300", "bg-rose-50", "text-rose-600", "hover:bg-rose-100");
-    } else if (isSecondary) {
-      button.classList.add("border-slate-200", "bg-white", "text-slate-700", "hover:bg-slate-50");
-    } else {
-      button.classList.add("border-trackly-600", "bg-trackly-600", "text-white", "hover:bg-trackly-700");
-    }
-  });
-
-  document.querySelectorAll(".nav button").forEach((button) => {
-    button.classList.add("w-full", "justify-start", "border", "border-transparent", "bg-transparent", "text-slate-200", "hover:bg-white/10", "hover:text-white");
-    if (button.classList.contains("active")) {
-      button.classList.add("border-white/15", "bg-white/10", "text-white");
-    }
-  });
-
-  document.querySelectorAll(".status-line").forEach((node) => node.classList.add("flex", "flex-wrap", "gap-2.5"));
-  document.querySelectorAll(".grid.two").forEach((node) => node.classList.add("grid-cols-1", "md:grid-cols-2"));
-  document.querySelectorAll(".grid.three").forEach((node) => node.classList.add("grid-cols-1", "md:grid-cols-3"));
-  document.querySelectorAll(".brand-stack").forEach((node) => node.classList.add("grid", "gap-2.5"));
-  document.querySelectorAll(".brand-text").forEach((node) => node.classList.add("text-3xl", "font-black", "tracking-normal"));
-  document.querySelectorAll(".brand-contract-copy").forEach((node) => node.classList.add("grid", "gap-0.5", "text-sm", "font-bold", "text-white/90"));
-  document.querySelectorAll(".review-action-row, .review-inline-actions, .transaction-grid, .transaction-meta, .photo-grid, .payment-form-grid").forEach((node) => node.classList.add("grid", "gap-3"));
-  document.querySelectorAll(".review-heading h2, .topbar h2").forEach((node) => node.classList.add("font-bold", "tracking-normal"));
-}
-
-function decorateButtonsWithIcons() {
-  buttonSelectorIcons.forEach(([selector, iconName]) => {
-    document.querySelectorAll(selector).forEach((button) => addIconToButton(button, iconName));
-  });
-
-  document.querySelectorAll("[data-select]").forEach((button) => addIconToButton(button, "eye"));
-  document.querySelectorAll("[data-edit-owner], [data-edit-fleet]").forEach((button) => addIconToButton(button, "pencil"));
-  document.querySelectorAll("[data-inline-review-action='Approved'], [data-review-action='Approved']").forEach((button) => addIconToButton(button, "check"));
-  document.querySelectorAll("[data-inline-review-action='Rejected'], [data-review-action='Rejected']").forEach((button) => addIconToButton(button, "x"));
-  document.querySelectorAll("[data-close-review], [data-close-consolidated-credit], [data-close-debit-dialog]").forEach((button) => {
-    if (button.tagName === "BUTTON") addIconToButton(button, "x");
-  });
-}
-
-function addIconToButton(button, iconName) {
-  if (!button || button.dataset.iconApplied === "true") return;
-  const label = button.textContent.trim();
-  if (!label) return;
-  button.dataset.iconApplied = "true";
-  button.innerHTML = `<i data-lucide="${iconName}" class="h-4 w-4 shrink-0"></i><span>${escapeHtml(label)}</span>`;
-}
 
 async function init() {
   state.config = await api("/api/config/status");
@@ -551,7 +243,19 @@ function pendingCount() {
 
 function renderView() {
   try {
-    if (state.view === "entry") return renderEntryForm();
+    if (state.view === "entry") {
+      return renderNewEntryForm({
+        entry: {},
+        state,
+        field,
+        selectField,
+        renderVehicleTypeField,
+        toDateTimeLocal,
+        ownerSelectField,
+        textareaField,
+        uploadField
+      });
+    }
     if (state.view === "review") return renderReview();
     if (state.view === "dashboard") return renderDashboard();
     if (state.view === "admin") return renderAdmin();
@@ -559,119 +263,6 @@ function renderView() {
   } catch (error) {
     return `<div class="card"><h3>Could not load view</h3><p>${escapeHtml(error.message || "Unknown error")}</p></div>`;
   }
-}
-
-function renderEntryForm(entry = {}) {
-  const receiptNumber = entry.receiptNumber || state.nextReceiptNumber || "Generating...";
-  return `
-    <div class="card">
-      <form id="entryForm">
-        <div class="receipt-strip">
-          <span># Receipt Number</span>
-          <strong>${receiptNumber}</strong>
-        </div>
-        <input name="receiptNumber" type="hidden" value="${receiptNumber === "Generating..." ? "" : receiptNumber}">
-        <section class="form-section">
-          <h3>Entry Identification</h3>
-          <div class="grid two">
-            ${field("serialNo", "S. No.", "text", entry.serialNo || "", {
-              placeholder: "Enter serial number",
-              pattern: "[0-9]{1,3}",
-              maxlength: "3",
-              inputmode: "numeric"
-            })}
-          </div>
-        </section>
-        
-        <section class="form-section">
-          <h3>Need to fill this form?</h3>
-          ${choiceGroup("formReason", ["No Electricity", "Mining Server was down", "Heavy Traffic"], entry.formReason, true)}
-          <h3>Is Ravanna Deducted?</h3>
-          ${choiceGroup("ravannaDeducted", ["Yes", "No"], entry.ravannaDeducted, true)}
-        </section>
-        <section class="form-section">
-          <h3>Vehicle Details</h3>
-          <div class="grid two">
-            ${selectField("vehicleCategory", "Vehicle Category", ["Tractor", "Dumper"], entry.vehicleCategory, "Select category")}
-            ${field("vehicleNumber", "Vehicle Number", "text", entry.vehicleNumber || "", { placeholder: "e.g. TN 01 AB 1234" })}
-            <div id="vehicleTypeField">${renderVehicleTypeField(entry.vehicleCategory, entry.vehicleType)}</div>
-          </div>
-        </section>
-        <section class="form-section">
-          <h3>Driver Details</h3>
-          <div class="grid two">
-            ${field("driverName", "Driver Name", "text", entry.driverName || "", { placeholder: "Full name" })}
-            ${field("driverPhone", "Phone Number", "tel", entry.driverPhone || "", { placeholder: "10-digit mobile number", pattern: "[0-9]{10}" })}
-          </div>
-          ${field("driverLicenseNumber", "License Number", "text", entry.driverLicenseNumber || "", { placeholder: "Driving license no." })}
-        </section>
-        <section class="form-section">
-          <h3>Owner Details</h3>
-          ${ownerSelectField(entry)}
-          <div class="grid two">
-            ${field("ownerPhone", "Owner Phone", "tel", entry.ownerPhone || "", { placeholder: "Owner phone", required: false, readonly: true })}
-            ${field("ownerAddress", "Owner Address", "text", entry.ownerAddress || "", { placeholder: "Owner address", required: false, readonly: true })}
-          </div>
-        </section>
-        <section class="form-section">
-          <h3>Entry & Exit Area</h3>
-          <div class="grid two">
-            ${field("entryAreaGate", "Entry Area / Gate", "text", entry.entryAreaGate || "", { placeholder: "e.g. Gate A, North Entrance" })}
-            ${field("exitAreaGate", "Exit Area / Gate", "text", entry.exitAreaGate || "", { placeholder: "e.g. Gate B, South Exit" })}
-          </div>
-        </section>
-        <section class="form-section">
-          <h3>Weight Details</h3>
-          <div class="grid three">
-            ${field("tareWeightTons", "Tare Weight (Tons) - Empty Vehicle", "number", entry.tareWeightTons || "", { step: "0.01", placeholder: "e.g. 5.0" })}
-            ${field("grossWeightTons", "Gross Weight (Tons) - Loaded", "number", entry.grossWeightTons || "", { step: "0.01", placeholder: "e.g. 15.0" })}
-            ${field("netWeightTons", "Net Weight (Tons) - Sand Load", "number", entry.netWeightTons || "", { step: "0.01", placeholder: "Auto-calculated" })}
-          </div>
-        </section>
-        <section class="form-section">
-          <h3>Time Details</h3>
-          <div class="grid two">
-            ${field("entryTime", "Entry Time", "datetime-local", toDateTimeLocal(entry.entryTime), {})}
-            ${field("exitTime", "Exit Time", "datetime-local", toDateTimeLocal(entry.exitTime), {})}
-          </div>
-        </section>
-        <section class="form-section">
-          <h3>Destination Details</h3>
-          <div class="grid two">
-            ${field("destinationName", "Name of Destination", "text", entry.destinationName || "", { placeholder: "e.g. Chennai Port, Site 4" })}
-            ${field("distanceKm", "Distance to Travel (km)", "number", entry.distanceKm || "", { step: "0.01", placeholder: "e.g. 120" })}
-          </div>
-          ${field("validityTimeHours", "Validity Time (hrs)", "number", entry.validityTimeHours || "", { step: "0.01", placeholder: "e.g. 24" })}
-        </section>
-        <section class="form-section">
-          <h3>Payment Details</h3>
-          <div class="grid two">
-            ${field("totalAmountInclGst", "Total Amount (incl. GST) (Rs.)", "number", entry.totalAmountInclGst || "", { step: "0.01", placeholder: "e.g. 2500" })}
-            ${field("amountPaid", "Mineral Amount (Rs.)", "number", entry.amountPaid || "", { step: "0.01", placeholder: "Auto-calculated", readonly: true })}
-          </div>
-          ${selectField("paymentMode", "Payment Mode", ["Cash", "UPI", "Bank Transfer","Advance", "Credit"], entry.paymentMode || "Cash")}
-          ${textareaField("notes", "Notes (optional)", entry.notes || "", "Any additional remarks...", false)}
-        </section>
-        <section class="form-section">
-          <h3>Photos <small>required photos from the daily entry sheet</small></h3>
-          <div class="grid two">
-            ${uploadField("driverPhoto", "Driver Photo", entry.driverPhotoUrl)}
-            ${uploadField("numberPlatePhoto", "Number Plate", entry.numberPlatePhotoUrl)}
-            ${uploadField("sideViewPhoto", "Side View", entry.sideViewPhotoUrl)}
-            ${uploadField("frontViewPhoto", "Front View", entry.frontViewPhotoUrl)}
-          </div>
-        </section>
-        <input name="date" type="hidden" value="${entry.date || new Date().toISOString().slice(0, 10)}">
-        <input name="sandType" type="hidden" value="${entry.sandType || "River Sand"}">
-        <input name="paymentStatus" type="hidden" value="${entry.paymentStatus || "Paid"}">
-        <input name="staffNotes" type="hidden" value="${entry.staffNotes || ""}">
-        <div class="actions">
-          <button type="submit">${entry.id ? "Save Changes" : "Submit for Review"}</button>
-          <span id="formTotal" class="badge">Total incl. GST: Rs. 0</span>
-        </div>
-      </form>
-    </div>
-  `;
 }
 
 function field(name, label, type, value, options = {}) {
@@ -772,10 +363,6 @@ function toDateTimeLocal(value) {
 
 function escapeAttr(value) {
   return String(value || "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]));
-}
-
-function escapeHtml(value) {
-  return escapeAttr(value);
 }
 
 function renderReview() {
@@ -2107,42 +1694,7 @@ function renderAdmin() {
       </div>
 
       ${state.adminTab === "users" ? `
-      <section class="card admin-section">
-        <div class="admin-section-head">
-          <div>
-            <h3>User Master</h3>
-            <p>Add and manage application users.</p>
-          </div>
-        </div>
-        <div class="grid two">
-          <div class="card admin-inner-card">
-            <h3>Add User</h3>
-            <form id="userForm">
-              ${field("fullName", "Full Name", "text", "", { placeholder: "e.g. Virendra Singh" })}
-              ${field("username", "User Name", "text", "")}
-              ${field("password", "Temporary Password", "text", "")}
-              <div class="field"><label>Role</label><select name="role">
-                <option value="staff">Staff</option>
-                <option value="reviewer">Reviewer</option>
-                <option value="analyst">Analyst</option>
-                <option value="admin">Admin</option>
-              </select></div>
-              <button type="submit" class="solid-action">Create User</button>
-            </form>
-          </div>
-          <div class="card admin-inner-card">
-            <h3>System Setup</h3>
-            <p><strong>Storage:</strong> ${state.config.demoMode ? "Demo memory storage" : "Google Sheets and Drive"}</p>
-            <p>Connected sheet tabs: Daily Entry Form, Owner Master, Owner Fleet Details, Owner Advance, Users, Reviewed Entries, and Receipt Registry.</p>
-            <p><strong>Health:</strong> ${state.health?.googleConnected ? "OK" : "Failed"}</p>
-            ${state.health?.driveFolder ? `<p><strong>Drive folder:</strong> ${state.health.driveFolder.name || state.health.driveFolder.id}</p>` : ""}
-            ${state.health?.error ? `<p><strong>Health error:</strong> ${state.health.error.message || state.health.error}</p>` : ""}
-          </div>
-        </div>
-        <div>
-          ${renderUsersTable()}
-        </div>
-      </section>
+      ${renderUserManagementPanel({ state, field, renderUsersTable })}
       ` : state.adminTab === "ownerAdvances" ? `
       <section class="card admin-section">
         <div class="admin-section-head">
@@ -2190,66 +1742,20 @@ function renderAdmin() {
         </div>
       </section>
       ` : `
-      <section class="card admin-section">
-        <div class="admin-section-head">
-          <div>
-            <h3>Owner Master</h3>
-            <p>Add and update owners from the Owner Master sheet tab. Fleet details for the selected owner are managed here as part of owner details.</p>
-          </div>
-        </div>
-        <div class="admin-owner-layout">
-          <div class="admin-form-pane">
-            <form id="ownerForm">
-              ${field("name", "Owner Name", "text", ownerDraft.name || "")}
-              ${field("phone", "Phone Number", "tel", ownerDraft.phone || "", { required: false, placeholder: "10-digit mobile number" })}
-              ${field("address", "Address", "text", ownerDraft.address || "", { required: false, placeholder: "Owner address" })}
-              <div class="actions">
-                <button type="submit" class="solid-action">${state.ownerDraft ? "Update Owner" : "Add Owner"}</button>
-                ${state.ownerDraft ? `<button type="button" class="secondary visible-secondary" id="cancelOwnerEdit">Cancel</button>` : ""}
-              </div>
-            </form>
-            <div class="admin-owner-fleet-block">
-              <div class="admin-list-head">
-                <h4>Fleet Details</h4>
-                <span>${activeOwnerName ? `${activeFleetDetails.length} for ${activeOwnerName}` : "Select owner first"}</span>
-              </div>
-              ${activeOwnerName ? `
-              <form id="fleetForm">
-                ${field("ownerNameDisplay", "Owner Name", "text", activeOwnerName, { readonly: true, required: false })}
-                <input type="hidden" name="ownerName" value="${escapeAttr(activeOwnerName)}">
-                <div class="grid two">
-                  ${field("vehicleNumber", "Vehicle Number", "text", fleetDraft.vehicleNumber || "", { placeholder: "RJ 24 RA 7986" })}
-                  ${selectField("vehicleCategory", "Vehicle Category", ["Tractor", "Dumper"], fleetDraft.vehicleCategory || "", "Select category")}
-                </div>
-                <div class="grid two">
-                  ${field("vehicleType", "Vehicle Type", "text", fleetDraft.vehicleType || "", { required: false, placeholder: "Commercial / 10 Wheels" })}
-                  ${selectField("status", "Status", ["Active", "Inactive"], fleetDraft.status || "Active")}
-                </div>
-                ${textareaField("notes", "Notes (optional)", fleetDraft.notes || "", "Extra fleet details...", false)}
-                <div class="actions">
-                  <button type="submit" class="solid-action">${state.fleetDraft ? "Update Fleet" : "Add Fleet"}</button>
-                  ${state.fleetDraft ? `<button type="button" class="secondary visible-secondary" id="cancelFleetEdit">Cancel</button>` : ""}
-                </div>
-              </form>
-              ${renderFleetTable(activeFleetDetails, activeOwnerName)}
-              ` : `<div class="empty compact">Create or select an owner to add fleet details.</div>`}
-            </div>
-          </div>
-          <div class="admin-list-pane">
-            <div class="admin-list-head">
-              <h4>Owners</h4>
-              <span id="ownerListCount">${ownerList.length} shown</span>
-            </div>
-            <div class="field admin-search-field">
-              <label>Search Owner</label>
-              <input id="ownerSearchInput" type="text" value="${escapeAttr(state.ownerSearch)}" placeholder="Search by owner, phone, or address">
-            </div>
-            <div class="admin-scroll-panel">
-              ${renderOwnersTable(ownerList)}
-            </div>
-          </div>
-        </div>
-      </section>
+      ${renderOwnerManagementPanel({
+        state,
+        ownerList,
+        activeOwnerName,
+        activeFleetDetails,
+        ownerDraft,
+        fleetDraft,
+        field,
+        selectField,
+        textareaField,
+        renderFleetTable,
+        renderOwnersTable,
+        escapeAttr
+      })}
       `}
     </div>
   `;
@@ -2619,96 +2125,50 @@ function bindView() {
     renderApp();
   });
 
-  const entryForm = document.querySelector("#entryForm");
-  if (entryForm) {
-    const updateTotal = () => {
-      const form = new FormData(entryForm);
-      const tare = Number(form.get("tareWeightTons") || 0);
-      const gross = Number(form.get("grossWeightTons") || 0);
-      const net = Math.max(0, gross - tare);
-      const netInput = entryForm.querySelector("[name='netWeightTons']");
-      if (netInput && !netInput.matches(":focus")) netInput.value = net ? net.toFixed(2) : "";
-      const total = Number(form.get("totalAmountInclGst") || 0);
-      const mineralAmount = total > 0 ? total / 1.05 : 0;
-      const mineralInput = entryForm.querySelector("[name='amountPaid']");
-      if (mineralInput && !mineralInput.matches(":focus")) mineralInput.value = mineralAmount ? mineralAmount.toFixed(2) : "";
-      const totalInput = entryForm.querySelector("[name='totalAmountInclGst']");
-      const badge = document.querySelector("#formTotal");
-      if (badge) badge.textContent = `Total incl. GST: Rs. ${formatMoney(total)}`;
-    };
-    entryForm.addEventListener("input", updateTotal);
-    setupOwnerSearchDropdown(entryForm);
-    entryForm.addEventListener("change", () => syncOwnerDetails(entryForm));
-    entryForm.querySelector("[name='vehicleCategory']")?.addEventListener("change", () => syncVehicleTypeField(entryForm));
-    updateTotal();
-    syncOwnerDetails(entryForm);
-    syncVehicleTypeField(entryForm);
-    entryForm.addEventListener("submit", async (event) => {
-      event.preventDefault();
-      const ownerName = String(entryForm.querySelector("[name='ownerName']")?.value || "").trim();
-      const paymentMode = String(entryForm.querySelector("[name='paymentMode']")?.value || "").trim();
-      if (ownerName && paymentMode.toLowerCase() === "advance") {
-        const owner = state.owners.find((item) => String(item.name || "").trim().toLowerCase() === ownerName.toLowerCase());
-        const currentBalance = Number(owner?.currentBalance || 0);
-        if (!owner || currentBalance <= 0) {
-          alert(`Advance payment is not allowed for ${ownerName} because Current Balance is zero.`);
-          return;
-        }
-      }
-      const button = submitButtonFor(entryForm, event);
-      try {
-        await runWithButton(button, state.selectedEntry ? "Saving..." : "Submitting...", async () => {
-          const payload = await formPayload(entryForm);
-          if (state.selectedEntry) {
-            const updated = await api(`/api/entries/${state.selectedEntry.id}`, { method: "PATCH", body: payload });
-            state.selectedEntry = updated.entry;
-            await Promise.all([loadEntries(), loadOwners(), loadNextReceipt()]);
-          } else {
-            const created = await api("/api/entries", { method: "POST", body: payload });
-            state.nextReceiptNumber = created.nextReceiptNumber || "";
-            await Promise.all([loadEntries(), loadOwners()]);
-          }
-          renderApp();
-        });
-      } catch (error) {
-        alert(error.message);
-      }
-    });
-  }
-
-  document.querySelectorAll("[data-select]").forEach((button) => {
-    button.addEventListener("click", () => {
-      state.selectedEntry = state.entries.find((entry) => entry.id === button.dataset.select);
-      renderApp();
-    });
+  bindNewEntrySubmission({
+    state,
+    api,
+    renderApp,
+    loadEntries,
+    loadOwners,
+    loadNextReceipt,
+    setupOwnerSearchDropdown,
+    syncOwnerDetails,
+    syncVehicleTypeField,
+    formPayload,
+    submitButtonFor,
+    runWithButton,
+    formatMoney
   });
 
-  document.querySelectorAll("[data-inline-review-action]").forEach((button) => {
-    button.addEventListener("click", async () => {
-      const entry = state.entries.find((item) => item.id === button.dataset.entryId);
-      if (!entry) return;
-      try {
-        const busyLabel = button.dataset.inlineReviewAction === "Approved" ? "Verifying..." : "Rejecting...";
-        setGlobalButtonLock(true, button, busyLabel);
-        await api(`/api/entries/${entry.id}/review`, {
-          method: "POST",
-          body: JSON.stringify({
-            status: button.dataset.inlineReviewAction,
-            reviewerNotes: entry.reviewerNotes || "",
-            amountPaid: entry.totalAmountInclGst,
-            paymentMode: entry.paymentMode
-          })
-        });
-        state.selectedReviewIds = state.selectedReviewIds.filter((id) => id !== entry.id);
-        if (state.selectedEntry?.id === entry.id) state.selectedEntry = null;
-        await Promise.all([loadEntries(), loadOwners()]);
-        renderApp();
-      } catch (error) {
-        alert(error.message);
-      } finally {
-        setGlobalButtonLock(false, button);
-      }
-    });
+  bindVerifyEntry({
+    state,
+    api,
+    renderApp,
+    loadEntries,
+    loadOwners,
+    collectReviewTransactions,
+    transactionRowTemplate,
+    formatMoney,
+    setGlobalButtonLock
+  });
+
+  bindOwnerManagement({
+    state,
+    api,
+    renderApp,
+    loadOwners,
+    loadEntries,
+    submitButtonFor,
+    runWithButton
+  });
+
+  bindUserManagement({
+    api,
+    renderApp,
+    loadUsers,
+    submitButtonFor,
+    runWithButton
   });
 
   document.querySelectorAll("[data-review-date]").forEach((button) => {
@@ -2723,13 +2183,10 @@ function bindView() {
 
   document.querySelectorAll("[data-calendar-shift]").forEach((button) => {
     button.addEventListener("click", () => {
-      const shift = Number(button.dataset.calendarShift || 0);
-      const [year, month] = String(state.reviewDate || "").split("-").map((part) => Number(part));
-      if (!Number.isFinite(year) || !Number.isFinite(month)) return;
-      const nextMonthIndex = month - 1 + shift;
-      const nextDate = new Date(year, nextMonthIndex, 1);
-      const nextIso = `${nextDate.getFullYear()}-${String(nextDate.getMonth() + 1).padStart(2, "0")}-01`;
-      state.reviewDate = nextIso;
+      const current = new Date(`${state.reviewDate}T00:00:00`);
+      current.setMonth(current.getMonth() + Number(button.dataset.calendarShift || 0));
+      const next = new Date(current.getFullYear(), current.getMonth(), 1);
+      state.reviewDate = next.toISOString().slice(0, 10);
       state.selectedEntry = null;
       state.selectedReviewIds = [];
       state.reviewPage = 1;
@@ -2871,135 +2328,6 @@ function bindView() {
     });
   });
 
-  const transactionList = document.querySelector("#transactionList");
-  const updateTransactionTotal = () => {
-    const totalNode = document.querySelector("#transactionTotal");
-    if (!transactionList || !totalNode) return;
-    const total = collectReviewTransactions().reduce((sum, transaction) => sum + Number(transaction.amount || 0), 0);
-    totalNode.textContent = `Rs. ${formatMoney(total)}`;
-  };
-
-  document.querySelector("#addTransactionBtn")?.addEventListener("click", () => {
-    if (!transactionList) return;
-    transactionList.insertAdjacentHTML("beforeend", transactionRowTemplate(transactionList.querySelectorAll("[data-transaction-row]").length));
-    bindTransactionRowEvents();
-    updateTransactionTotal();
-  });
-
-  function bindTransactionRowEvents() {
-    document.querySelectorAll("[data-remove-transaction]").forEach((button) => {
-      button.onclick = () => {
-        button.closest("[data-transaction-row]")?.remove();
-        syncTransactionRemoveState();
-        updateTransactionTotal();
-      };
-    });
-    transactionList?.querySelectorAll("input, select").forEach((fieldNode) => {
-      fieldNode.oninput = updateTransactionTotal;
-      fieldNode.onchange = updateTransactionTotal;
-    });
-    syncTransactionRemoveState();
-  }
-
-  function syncTransactionRemoveState() {
-    const rows = document.querySelectorAll("[data-transaction-row]");
-    rows.forEach((row, index) => {
-      const button = row.querySelector("[data-remove-transaction]");
-      if (button) button.disabled = rows.length === 1 || index === 0;
-    });
-  }
-
-  bindTransactionRowEvents();
-
-  document.querySelectorAll("[data-review-action]").forEach((button) => {
-    button.addEventListener("click", async () => {
-      if (!state.selectedEntry) return;
-      const notes = document.querySelector("[name='reviewerNotes']")?.value || "";
-      const transactions = collectReviewTransactions();
-      const amountPaid = transactions.reduce((sum, transaction) => sum + Number(transaction.amount || 0), 0);
-      const paymentMode = transactions.length === 1 ? transactions[0].mode : "Multiple";
-      try {
-        const busyLabel = button.dataset.reviewAction === "Approved" ? "Verifying..." : "Rejecting...";
-        setGlobalButtonLock(true, button, busyLabel);
-        await api(`/api/entries/${state.selectedEntry.id}/review`, {
-          method: "POST",
-          body: JSON.stringify({
-            status: button.dataset.reviewAction,
-            reviewerNotes: notes,
-            amountPaid,
-            paymentMode,
-            transactions
-          })
-        });
-        state.selectedReviewIds = state.selectedReviewIds.filter((id) => id !== state.selectedEntry.id);
-        state.selectedEntry = null;
-        await Promise.all([loadEntries(), loadOwners()]);
-        renderApp();
-      } catch (error) {
-        alert(error.message);
-      } finally {
-        setGlobalButtonLock(false, button);
-      }
-    });
-  });
-
-  const downloadDraft = document.querySelector("#downloadDraft");
-  if (downloadDraft) {
-    downloadDraft.addEventListener("click", () => {
-      window.open(`/api/entries/${state.selectedEntry.id}/download`, "_blank");
-    });
-  }
-
-  const userForm = document.querySelector("#userForm");
-  const ownerForm = document.querySelector("#ownerForm");
-  if (ownerForm) {
-    ownerForm.addEventListener("submit", async (event) => {
-      event.preventDefault();
-      const button = submitButtonFor(ownerForm, event);
-      try {
-        await runWithButton(button, "Saving...", async () => {
-          const formData = Object.fromEntries(new FormData(ownerForm));
-          if (state.ownerDraft?.originalName) {
-            await api(`/api/owners/${encodeURIComponent(state.ownerDraft.originalName)}`, {
-              method: "PATCH",
-              body: JSON.stringify(formData)
-            });
-          } else {
-            await api("/api/owners", {
-              method: "POST",
-              body: JSON.stringify(formData)
-            });
-          }
-          state.ownerDraft = null;
-          await Promise.all([loadOwners(), loadEntries()]);
-          renderApp();
-        });
-      } catch (error) {
-        alert(error.message);
-      }
-    });
-  }
-
-  document.querySelector("#cancelOwnerEdit")?.addEventListener("click", () => {
-    state.ownerDraft = null;
-    renderApp();
-  });
-
-  document.querySelectorAll("[data-edit-owner]").forEach((button) => {
-    button.addEventListener("click", () => {
-      const owner = state.owners.find((item) => item.name === button.dataset.editOwner);
-      if (!owner) return;
-      state.ownerDraft = {
-        originalName: owner.name,
-        name: owner.name,
-        phone: owner.phone || "",
-        address: owner.address || ""
-      };
-      state.activeOwnerName = owner.name;
-      state.fleetDraft = null;
-      renderApp();
-    });
-  });
 
   const fleetForm = document.querySelector("#fleetForm");
   if (fleetForm) {
@@ -3045,62 +2373,6 @@ function bindView() {
     });
   });
 
-  if (userForm) {
-    userForm.addEventListener("submit", async (event) => {
-      event.preventDefault();
-      const button = submitButtonFor(userForm, event);
-      try {
-        await runWithButton(button, "Saving...", async () => {
-          const result = await api("/api/users", { method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(userForm))) });
-          userForm.reset();
-          await loadUsers();
-          renderApp();
-          if (result.temporaryPassword) alert(`Temporary password for ${result.user.username}: ${result.temporaryPassword}`);
-        });
-      } catch (error) {
-        alert(error.message);
-      }
-    });
-  }
-
-  document.querySelectorAll("[data-user-toggle]").forEach((button) => {
-    button.addEventListener("click", async () => {
-      try {
-        await runWithButton(button, "Saving...", async () => {
-          await api(`/api/users/${button.dataset.userToggle}`, {
-            method: "PATCH",
-            body: JSON.stringify({ active: button.dataset.active })
-          });
-          await loadUsers();
-          renderApp();
-        });
-      } catch (error) {
-        alert(error.message);
-      }
-    });
-  });
-
-  document.querySelectorAll("[data-user-reset]").forEach((button) => {
-    button.addEventListener("click", async () => {
-      const nextPassword = window.prompt("Enter new password for this user");
-      if (nextPassword == null) return;
-      if (!nextPassword.trim()) {
-        alert("Password is required");
-        return;
-      }
-      try {
-        await runWithButton(button, "Resetting...", async () => {
-          const result = await api(`/api/users/${button.dataset.userReset}/reset-password`, {
-            method: "POST",
-            body: JSON.stringify({ password: nextPassword.trim() })
-          });
-          alert(`Password reset for ${result.user.username}`);
-        });
-      } catch (error) {
-        alert(error.message);
-      }
-    });
-  });
 }
 
 function setupOwnerSearchDropdown(form) {
@@ -3441,9 +2713,12 @@ function formatMoney(value) {
   return Number(value || 0).toLocaleString("en-IN", { maximumFractionDigits: 2 });
 }
 
-init().catch((error) => {
-  app.innerHTML = `<div class="panel" style="margin:40px auto"><h2>Trackly could not start</h2><p>${error.message}</p></div>`;
-});
-=======
-startApp();
->>>>>>> origin/main
+function startApp() {
+  init().catch((error) => {
+    app.innerHTML = `<div class="panel" style="margin:40px auto"><h2>Trackly could not start</h2><p>${error.message}</p></div>`;
+  });
+}
+
+export {
+  startApp
+};

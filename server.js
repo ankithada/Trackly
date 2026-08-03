@@ -1389,7 +1389,8 @@ async function readEntries() {
   const reviewedByReceipt = new Map(reviewedRows.map((row) => [row.receiptNumber, row]));
   const ownersByName = new Map(owners.map((owner) => [owner.name, owner]));
   return dailyRows.map((row) => {
-    const entry = mapDailyEntry(row, reviewedByReceipt.get(row["Receipt No."] || ""));
+    const reviewed = reviewedByReceipt.get(row["Receipt No."] || "");
+    const entry = mapDailyEntry(row, reviewed);
     const owner = ownersByName.get(entry.ownerName);
     if (owner) {
       entry.ownerPhone = owner.phone;
@@ -1842,14 +1843,19 @@ async function migratePlaintextPasswords(users) {
 
 function mapDailyEntry(row, reviewed = null) {
   const receiptNumber = row["Receipt No."] || "";
+  const baseAmount = row["Mineral Amount"] || row["Total Amount"] || "0";
   const reviewedTransactions = reviewed?.transactions?.length
     ? reviewed.transactions
     : [{
         id: "TX-1",
-        amount: row["Mineral Amount"] || "0",
+        amount: baseAmount,
         mode: row["Payment Mode"] || "Cash",
         notes: ""
       }];
+  const paidTotal = transactionTotal(reviewedTransactions);
+  const effectiveAmountPaid = reviewed?.transactionTotal != null && reviewed.transactionTotal !== ""
+    ? Number(reviewed.transactionTotal || 0)
+    : paidTotal;
   return {
     id: receiptNumber || `EN-${crypto.randomBytes(4).toString("hex").toUpperCase()}`,
     serialNo: row["S. No."] || "",
@@ -1877,8 +1883,8 @@ function mapDailyEntry(row, reviewed = null) {
     destinationName: row["Name of Destination"] || "",
     distanceKm: row["Distance to travel"] || "",
     validityTimeHours: row["Validity Time"] || "",
-    amountPaid: row["Mineral Amount"] || "",
-    totalAmountInclGst: row["Total Amount"] || "",
+    amountPaid: String(effectiveAmountPaid),
+    totalAmountInclGst: String(effectiveAmountPaid),
     paymentMode: row["Payment Mode"] || "Cash",
     paymentStatus: reviewed ? reviewed.status : "Pending Review",
     sandType: "River Sand",
@@ -1892,14 +1898,14 @@ function mapDailyEntry(row, reviewed = null) {
     reviewerNotes: reviewed?.reviewerNotes || "",
     transactions: reviewedTransactions,
     transactionSummary: reviewed?.transactionSummary || transactionSummary(reviewedTransactions),
-    transactionTotal: reviewed?.transactionTotal || String(transactionTotal(reviewedTransactions)),
+    transactionTotal: String(reviewed?.transactionTotal != null && reviewed.transactionTotal !== "" ? Number(reviewed.transactionTotal || 0) : paidTotal),
     driverPhotoUrl: row["Driver Photo"] || "",
     numberPlatePhotoUrl: row["Vehicle Number Plate Photo"] || "",
     sideViewPhotoUrl: row["Side View Photo"] || "",
     frontViewPhotoUrl: row["Front View Photo"] || "",
     driveFileId: "",
     driveFileUrl: "",
-    grossAmount: row["Mineral Amount"] || ""
+    grossAmount: String(effectiveAmountPaid)
   };
 }
 
@@ -2925,18 +2931,36 @@ async function handleApi(req, res, user, pathname) {
         updated.driveFileUrl = file.webViewLink || "";
       }
       await applyEntryAdvanceTransition(entries[index], updated);
-      entries[index] = updated;
-      await writeEntries(entries);
       const reviewedTransactions = Array.isArray(updated.transactions) ? updated.transactions : [];
+      const reviewedEntry = {
+        ...updated,
+        amountPaid: String(updated.transactionTotal || updated.amountPaid || 0),
+        totalAmountInclGst: String(updated.transactionTotal || updated.totalAmountInclGst || 0),
+        grossAmount: String(updated.transactionTotal || updated.grossAmount || 0),
+        paymentMode: reviewedTransactions.length === 1 ? reviewedTransactions[0].mode : "Multiple",
+        transactionSummary: updated.transactionSummary || transactionSummary(reviewedTransactions),
+        transactionTotal: String(updated.transactionTotal || transactionTotal(reviewedTransactions)),
+        transactionCount: String(reviewedTransactions.length),
+        transactions: reviewedTransactions,
+        reviewerNotes: String(updated.reviewerNotes || "")
+      };
+      entries[index] = {
+        ...updated,
+        amountPaid: String(entries[index].amountPaid || updated.amountPaid || 0),
+        totalAmountInclGst: String(entries[index].totalAmountInclGst || updated.totalAmountInclGst || 0),
+        grossAmount: String(entries[index].grossAmount || updated.grossAmount || 0),
+        paymentMode: entries[index].paymentMode || updated.paymentMode || "Cash"
+      };
+      await writeEntries(entries);
       const reviewedSummary = updated.transactionSummary || transactionSummary(reviewedTransactions);
       const reviewedTotal = updated.transactionTotal || String(transactionTotal(reviewedTransactions));
       const reviewedNotes = String(updated.reviewerNotes || "");
       await upsertReviewedEntry({
-        receiptNumber: updated.receiptNumber,
-        reviewedAt: updated.reviewedAt,
-        status: updated.status,
-        reviewedBy: updated.reviewedBy,
-        totalAmountInclGst: String(updated.totalAmountInclGst || 0),
+        receiptNumber: reviewedEntry.receiptNumber,
+        reviewedAt: reviewedEntry.reviewedAt,
+        status: reviewedEntry.status,
+        reviewedBy: reviewedEntry.reviewedBy,
+        totalAmountInclGst: String(reviewedEntry.totalAmountInclGst || 0),
         transactionTotal: String(reviewedTotal),
         transactionCount: String(reviewedTransactions.length),
         transactions: reviewedTransactions,

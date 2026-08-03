@@ -2727,10 +2727,13 @@ function bindView() {
 
   document.querySelectorAll("[data-calendar-shift]").forEach((button) => {
     button.addEventListener("click", () => {
-      const current = new Date(`${state.reviewDate}T00:00:00`);
-      current.setMonth(current.getMonth() + Number(button.dataset.calendarShift || 0));
-      const next = new Date(current.getFullYear(), current.getMonth(), 1);
-      state.reviewDate = next.toISOString().slice(0, 10);
+      const shift = Number(button.dataset.calendarShift || 0);
+      const [year, month] = String(state.reviewDate || "").split("-").map((part) => Number(part));
+      if (!Number.isFinite(year) || !Number.isFinite(month)) return;
+      const nextMonthIndex = month - 1 + shift;
+      const nextDate = new Date(year, nextMonthIndex, 1);
+      const nextIso = `${nextDate.getFullYear()}-${String(nextDate.getMonth() + 1).padStart(2, "0")}-01`;
+      state.reviewDate = nextIso;
       state.selectedEntry = null;
       state.selectedReviewIds = [];
       state.reviewPage = 1;

@@ -2337,7 +2337,7 @@ function isRevenueEligibleEntry(entry) {
 function analytics(entries) {
   const approved = entries.filter(isRevenueEligibleEntry);
   const totals = approved.reduce((acc, entry) => {
-    const revenue = Number(entry.totalAmountInclGst || entry.grossAmount || 0);
+    const revenue = Number(entry.transactionTotal || entry.totalAmountInclGst || entry.grossAmount || entry.amountPaid || 0);
     acc.revenue += revenue;
     acc.quantity += Number(entry.netWeightTons || entry.quantityCft || 0);
     acc.loads += 1;

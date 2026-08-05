@@ -434,7 +434,7 @@ function renderEntriesTable(entries, selectable = false) {
               <td>${entry.driverName}</td>
               <td>${entry.destinationName || "-"}</td>
               <td>${formatMoney(entry.netWeightTons)} tons</td>
-              <td>Rs. ${formatMoney(entry.totalAmountInclGst || entry.grossAmount)}</td>
+              <td>Rs. ${formatMoney(reviewedRevenueValue(entry))}</td>
               <td><span class="badge ${entry.status === "Approved" ? "approved" : entry.status === "Rejected" ? "rejected" : "pending"}">${entry.status}</span></td>
               <td class="actions">
                 ${selectable ? `<button class="secondary" data-select="${entry.id}">Review</button>` : ""}
@@ -488,6 +488,11 @@ function isRevenueEligibleEntry(entry) {
   return String(entry?.status || "").trim() === "Approved";
 }
 
+function reviewedRevenueValue(entry) {
+  const reviewedAmount = Number(entry?.transactionTotal || entry?.totalAmountInclGst || entry?.grossAmount || entry?.amountPaid || 0);
+  return Number.isFinite(reviewedAmount) ? reviewedAmount : 0;
+}
+
 function renderReviewStatsCard(entries) {
   const total = entries.length;
   const pending = entries.filter((entry) => entry.status === "Pending Review").length;
@@ -513,10 +518,10 @@ function renderReviewStatsCard(entries) {
 
 function renderReviewRevenueCard(entries) {
   const approvedEntries = entries.filter(isRevenueEligibleEntry);
-  const dailyRevenue = approvedEntries.reduce((sum, entry) => sum + Number(entry.totalAmountInclGst || entry.grossAmount || 0), 0);
+  const dailyRevenue = approvedEntries.reduce((sum, entry) => sum + reviewedRevenueValue(entry), 0);
   const monthPrefix = state.reviewDate.slice(0, 7);
   const monthlyEntries = state.entries.filter((entry) => String(entry.date || "").startsWith(monthPrefix) && isRevenueEligibleEntry(entry));
-  const monthlyRevenue = monthlyEntries.reduce((sum, entry) => sum + Number(entry.totalAmountInclGst || entry.grossAmount || 0), 0);
+  const monthlyRevenue = monthlyEntries.reduce((sum, entry) => sum + reviewedRevenueValue(entry), 0);
   const dailyDebits = state.debitEntries
     .filter((entry) => String(entry.date || "").slice(0, 10) === state.reviewDate)
     .reduce((sum, entry) => sum + Number(entry.amount || 0), 0);
@@ -596,8 +601,8 @@ function renderReviewListCard(entries) {
 function renderReviewEntriesPanel(entries) {
   const allowBatchSelection = !["Consolidated Credits", "Debit Entries"].includes(state.reviewFilter);
   const selectedEntries = allowBatchSelection ? entries.filter((entry) => state.selectedReviewIds.includes(entry.id)) : [];
-  const selectedTotal = selectedEntries.reduce((sum, entry) => sum + Number(entry.totalAmountInclGst || entry.grossAmount || 0), 0);
-  const filteredDailyRevenue = entries.reduce((sum, entry) => sum + Number(entry.totalAmountInclGst || entry.grossAmount || 0), 0);
+  const selectedTotal = selectedEntries.reduce((sum, entry) => sum + reviewedRevenueValue(entry), 0);
+  const filteredDailyRevenue = entries.reduce((sum, entry) => sum + reviewedRevenueValue(entry), 0);
   const requestedPageSize = Number(state.reviewPageSize || 10);
   const pageSize = REVIEW_PAGE_SIZE_OPTIONS.includes(requestedPageSize) ? requestedPageSize : 10;
   const totalEntries = entries.length;
@@ -736,7 +741,7 @@ function renderReviewEntryCard(entry) {
           </div>
           <div class="review-fact amount">
             <span>Amount</span>
-            <strong>Rs. ${formatMoney(entry.totalAmountInclGst || entry.grossAmount)}</strong>
+            <strong>Rs. ${formatMoney(reviewedRevenueValue(entry))}</strong>
             <small>${entry.paymentMode || "-"}</small>
           </div>
           <div class="review-status-meta">
@@ -1010,7 +1015,7 @@ function renderConsolidatedCreditDialog() {
                 ${draft.entries.map((entry) => `
                   <div class="detail-row">
                     <span>${escapeHtml(entry.receiptNumber || entry.id)}</span>
-                    <strong>Rs. ${formatMoney(entry.totalAmountInclGst || entry.grossAmount)}</strong>
+                    <strong>Rs. ${formatMoney(reviewedRevenueValue(entry))}</strong>
                   </div>
                 `).join("")}
               </div>
@@ -1145,10 +1150,10 @@ function renderDashboard() {
   const todaysApproved = state.entries.filter((entry) => isRevenueEligibleEntry(entry) && entry.date === today);
   const monthTodaysApproved = monthApproved.filter((entry) => entry.date === today);
   const todaysDebits = monthDebits.filter((entry) => entry.date === today);
-  const totalRevenue = sumAmount(monthApproved, "totalAmountInclGst", "grossAmount", "amountPaid");
-  const monthRevenue = sumAmount(monthApproved, "totalAmountInclGst", "grossAmount", "amountPaid");
-  const todayRevenue = sumAmount(todaysApproved, "totalAmountInclGst", "grossAmount", "amountPaid");
-  const monthTodayRevenue = sumAmount(monthTodaysApproved, "totalAmountInclGst", "grossAmount", "amountPaid");
+  const totalRevenue = monthApproved.reduce((sum, entry) => sum + reviewedRevenueValue(entry), 0);
+  const monthRevenue = monthApproved.reduce((sum, entry) => sum + reviewedRevenueValue(entry), 0);
+  const todayRevenue = todaysApproved.reduce((sum, entry) => sum + reviewedRevenueValue(entry), 0);
+  const monthTodayRevenue = monthTodaysApproved.reduce((sum, entry) => sum + reviewedRevenueValue(entry), 0);
   const totalDebits = sumAmount(monthDebits, "amount");
   const monthDebitTotal = sumAmount(monthDebits, "amount");
   const todayDebitTotal = sumAmount(todaysDebits, "amount");
@@ -1156,11 +1161,11 @@ function renderDashboard() {
   const monthlyCreditSeries = monthlyRevenueSeries(monthApproved);
   const monthlyDebitSeries = monthlyRevenueSeries(monthDebits, "amount");
   const last30Series = buildLast30DaySeries(monthEntries, monthApproved);
-  const vehicleBreakdown = breakdownMap(monthEntries, (entry) => {
+  const vehicleBreakdown = breakdownMap(monthApproved, (entry) => {
     if (entry.vehicleCategory === "Dumper") return "Dumper";
     if (entry.vehicleCategory === "Tractor" && entry.vehicleType) return `Tractor - ${entry.vehicleType}`;
     return entry.vehicleCategory || "Unknown";
-  }, (entry) => Number(entry.totalAmountInclGst || entry.grossAmount || entry.amountPaid || 0));
+  }, (entry) => reviewedRevenueValue(entry));
   const paymentModes = paymentModeDistribution(monthApproved);
   const recentActivity = monthEntries
     .slice()
@@ -1315,7 +1320,7 @@ function buildLast30DaySeries(entries, approvedEntries) {
   const tripMap = distributionMap(entries.filter((entry) => entry.date), (entry) => entry.date);
   const revenueMap = approvedEntries.reduce((acc, entry) => {
     const key = entry.date;
-    acc[key] = (acc[key] || 0) + Number(entry.totalAmountInclGst || entry.grossAmount || entry.amountPaid || 0);
+    acc[key] = (acc[key] || 0) + reviewedRevenueValue(entry);
     return acc;
   }, {});
   const result = [];
@@ -1330,11 +1335,14 @@ function buildLast30DaySeries(entries, approvedEntries) {
   return result;
 }
 
-function monthlyRevenueSeries(rows, amountKey = "totalAmountInclGst") {
+function monthlyRevenueSeries(rows, amountKey = null) {
   return rows.reduce((acc, row) => {
     const key = String(row.date || "").slice(0, 7);
     if (!key) return acc;
-    acc[key] = (acc[key] || 0) + Number(row[amountKey] || row.grossAmount || row.amountPaid || 0);
+    const amount = amountKey === "amount"
+      ? Number(row.amount || 0)
+      : reviewedRevenueValue(row);
+    acc[key] = (acc[key] || 0) + amount;
     return acc;
   }, {});
 }
@@ -1363,7 +1371,7 @@ function paymentModeDistribution(entries) {
     const key = entry.paymentMode || "Unknown";
     if (!acc[key]) acc[key] = { count: 0, amount: 0 };
     acc[key].count += 1;
-    acc[key].amount += Number(entry.totalAmountInclGst || entry.grossAmount || entry.amountPaid || 0);
+    acc[key].amount += reviewedRevenueValue(entry);
     return acc;
   }, {});
 }
@@ -1517,7 +1525,7 @@ function renderOwnerTransactionsWidget(entries) {
       };
     }
     acc[key].transactions += 1;
-    acc[key].revenue += Number(entry.totalAmountInclGst || entry.grossAmount || entry.amountPaid || 0);
+    acc[key].revenue += reviewedRevenueValue(entry);
     return acc;
   }, {});
 
@@ -1661,7 +1669,7 @@ function renderRecentActivity(entries) {
             <div class="recent-activity-meta">${escapeHtml(entry.driverName || entry.ownerName || "-")}</div>
           </div>
           <div class="recent-activity-side">
-            <strong>Rs ${formatMoney(Number(entry.totalAmountInclGst || entry.grossAmount || entry.amountPaid || 0))}</strong>
+            <strong>Rs ${formatMoney(reviewedRevenueValue(entry))}</strong>
             <span class="badge ${entry.status === "Approved" ? "approved" : entry.status === "Rejected" ? "rejected" : "pending"}">${escapeHtml((entry.status || "Pending").replace("Pending Review", "Pending"))}</span>
           </div>
         </article>
@@ -2292,7 +2300,7 @@ function bindView() {
     state.consolidatedCreditDraft = {
       entryIds: selectedEntries.map((entry) => entry.id),
       entries: selectedEntries,
-      totalAmount: selectedEntries.reduce((sum, entry) => sum + Number(entry.totalAmountInclGst || entry.grossAmount || 0), 0),
+      totalAmount: selectedEntries.reduce((sum, entry) => sum + reviewedRevenueValue(entry), 0),
       receivedBy: state.user.name || "",
       paymentMode: "Cash",
       notes: "",

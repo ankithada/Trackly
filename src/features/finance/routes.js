@@ -65,7 +65,7 @@ async function handleRoutes(req, res, user, pathname, ctx) {
       const createdDate = new Date().toISOString().slice(0, 10);
       const entryMetadata = selectedEntries.map((entry) => ({
         receiptNo: entry.receiptNumber || entry.id,
-        totalAmount: Number(entry.totalAmountInclGst || entry.grossAmount || 0),
+        totalAmount: Number(entry.transactionTotal || entry.totalAmountInclGst || entry.grossAmount || entry.amountPaid || 0),
         paymentMode: entry.paymentMode || "",
         vehicleCategory: entry.vehicleCategory || "",
         ownerName: entry.ownerName || ""
